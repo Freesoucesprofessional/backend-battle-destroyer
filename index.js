@@ -25,7 +25,6 @@ const limiter = rateLimit({
   message: 'Too many requests, please try again later.'
 });
 app.use('/api/', limiter);
-app.use('/api/admin', require('./routes/admin'));
 
 // ===== HEALTH CHECK =====
 app.get('/', (req, res) => {
@@ -35,7 +34,7 @@ app.get('/', (req, res) => {
 // ===== ROUTES =====
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/panel', require('./routes/panel'));
-
+app.use('/api/admin', require('./routes/admin'));
 // ===== 404 HANDLER =====
 app.use((req, res) => {
   res.status(404).json({ message: '❌ Route not found' });
