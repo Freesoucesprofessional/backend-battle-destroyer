@@ -25,6 +25,7 @@ const limiter = rateLimit({
   message: 'Too many requests, please try again later.'
 });
 app.use('/api/', limiter);
+app.use('/api/admin', require('./routes/admin'));
 
 // ===== HEALTH CHECK =====
 app.get('/', (req, res) => {
