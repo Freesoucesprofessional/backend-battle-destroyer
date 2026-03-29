@@ -1,8 +1,3 @@
-// server.js — critical setup required for Turnstile + correct IP detection
-const express = require('express');
-const cors    = require('cors');
-const app     = express();
-
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -13,9 +8,6 @@ require('dotenv').config();
 const app = express();
 
 // ===== TRUST PROXY =====
-// ⚠️ REQUIRED for Turnstile IP verification to work correctly.
-// Without this, req.ip returns '::1' (loopback) behind nginx/Heroku/Railway/Render,
-// which breaks Cloudflare's remoteip validation and causes random CAPTCHA failures.
 app.set('trust proxy', 1);
 
 // ===== SECURITY =====
