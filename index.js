@@ -1,3 +1,8 @@
+// server.js — critical setup required for Turnstile + correct IP detection
+const express = require('express');
+const cors    = require('cors');
+const app     = express();
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -6,6 +11,12 @@ const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
+
+// ===== TRUST PROXY =====
+// ⚠️ REQUIRED for Turnstile IP verification to work correctly.
+// Without this, req.ip returns '::1' (loopback) behind nginx/Heroku/Railway/Render,
+// which breaks Cloudflare's remoteip validation and causes random CAPTCHA failures.
+app.set('trust proxy', 1);
 
 // ===== SECURITY =====
 app.use(helmet());
@@ -17,7 +28,7 @@ app.use(express.json());
 
 // ===== RATE LIMITING =====
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 50,
   message: 'Too many requests, please try again later.'
 });
@@ -49,7 +60,6 @@ app.use((err, req, res, next) => {
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log('✅ MongoDB connected successfully');
-    
     app.listen(process.env.PORT || 5000, () => {
       console.log(`🚀 Server running on port ${process.env.PORT || 5000}`);
       console.log(`📍 Local: http://localhost:${process.env.PORT || 5000}`);
