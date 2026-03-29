@@ -1,11 +1,8 @@
 const mongoose = require('mongoose');
-const crypto   = require('crypto'); // built-in Node module — no install needed
+const crypto   = require('crypto');
 
 const UserSchema = new mongoose.Schema({
-  // Auto-generated 8-char hex ID, e.g. "a3f9c21b"
-  // Generated in pre('save') below — never null.
   userId:        { type: String, unique: true },
-
   username:      { type: String, required: true, unique: true, trim: true },
   email:         { type: String, required: true, unique: true, lowercase: true },
   password:      { type: String, required: true },
@@ -16,16 +13,19 @@ const UserSchema = new mongoose.Schema({
   ipAddress:     { type: String, default: '' },
   fingerprint:   { type: String, default: '' },
   creditGiven:   { type: Boolean, default: false },
-  isPro:         { type: Boolean, default: false }, // upgraded when user purchases credits
+  isPro:         { type: Boolean, default: false },
   createdAt:     { type: Date, default: Date.now },
 });
 
-// ─── Auto-generate userId before every insert ─────────────────────────────
-// This runs only on new documents (isNew guard), so existing users are safe.
+// FIX: Generate userId AND referralCode together in pre('save').
+// Previously auth.js set user.referralCode = user.userId BEFORE pre('save') ran,
+// meaning userId was still undefined at that point — causing referralCode to be
+// saved as undefined, which broke the unique index and threw a duplicate-key error.
 UserSchema.pre('save', async function () {
   if (this.isNew && !this.userId) {
-    this.userId       = crypto.randomBytes(4).toString('hex'); // 8-char unique hex
-    this.referralCode = this.userId; // set both here — no need for double save in auth.js
+    const hex = crypto.randomBytes(4).toString('hex'); // e.g. "a3f9c21b"
+    this.userId      = hex;
+    this.referralCode = hex; // set both here — auth.js must NOT touch referralCode
   }
 });
 
