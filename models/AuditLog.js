@@ -47,11 +47,6 @@ const AuditLogSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
     index: true
-  },
-  expiresAt: {
-    type: Date,
-    default: () => new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
-    index: true
   }
 });
 
