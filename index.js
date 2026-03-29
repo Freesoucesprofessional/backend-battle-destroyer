@@ -2,10 +2,10 @@ const express   = require('express');
 const mongoose  = require('mongoose');
 const cors      = require('cors');
 const helmet    = require('helmet');
-const rateLimit = require('express-rate-limit');
 const csrf      = require('csurf');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
 const app = express();
 
@@ -98,7 +98,7 @@ const adminLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: false,
-  keyGenerator: (req, res) => {
+  ipKeyGenerator: (req, res) => {
     // Rate limit by IP + Admin ID for better tracking
     return `${req.ip}:${req.headers['x-admin-token'] || 'anonymous'}`;
   }
@@ -113,7 +113,7 @@ const resellerLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
-  keyGenerator: (req, res) => {
+  ipKeyGenerator: (req, res) => {
     // Rate limit by reseller ID
     return `${req.ip}:${req.resellerId || 'anonymous'}`;
   }
