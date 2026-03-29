@@ -2,10 +2,10 @@ const express   = require('express');
 const mongoose  = require('mongoose');
 const cors      = require('cors');
 const helmet    = require('helmet');
+const rateLimit = require('express-rate-limit');
 const csrf      = require('csurf');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
-const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
 const app = express();
 
@@ -98,10 +98,10 @@ const adminLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: false,
-  keyGenerator: (req, res) => {
-    // Rate limit by IP + Admin ID for better tracking
-    return `${ipKeyGenerator(req)}:${req.headers['x-admin-token'] || 'anonymous'}`;
-  }
+  keyGenerator: (req) => {
+    return `${req.ip.replace(/^.*:/, '')}:${req.headers['x-admin-token'] || 'anonymous'}`;
+  },
+  validate: { trustProxy: false, xForwardedForHeader: false }
 });
 app.use('/api/admin', adminLimiter);
 
@@ -113,10 +113,10 @@ const resellerLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
-  keyGenerator: (req, res) => {
-    // Rate limit by reseller ID
-    return `${ipKeyGenerator(req)}:${req.resellerId || 'anonymous'}`;
-  }
+  keyGenerator: (req) => {
+    return `${req.ip.replace(/^.*:/, '')}:${req.resellerId || 'anonymous'}`;
+  },
+  validate: { trustProxy: false, xForwardedForHeader: false }
 });
 app.use('/api/reseller', resellerLimiter);
 
@@ -183,8 +183,6 @@ app.use((err, req, res, next) => {
 
 // ===== MONGODB CONNECTION & SERVER START =====
 mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
   serverSelectionTimeoutMS: 5000,
 })
   .then(() => {

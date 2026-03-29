@@ -15,14 +15,16 @@ const loginLimiter = rateLimit({
   max: 10,
   skipSuccessfulRequests: true,
   message: { message: 'Too many login attempts. Try again in 15 minutes.' },
-  keyGenerator: (req, res) => req.ip
+  keyGenerator: (req) => req.ip.replace(/^.*:/, ''),
+  validate: { trustProxy: false, xForwardedForHeader: false }
 });
 
 const actionLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 30,
   message: { message: 'Too many requests. Slow down.' },
-  keyGenerator: (req, res) => req.resellerId || req.ip
+  keyGenerator: (req) => req.resellerId || req.ip.replace(/^.*:/, ''),
+  validate: { trustProxy: false, xForwardedForHeader: false }
 });
 
 // ===== BRUTE FORCE MAP FOR LOGIN =====
