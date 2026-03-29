@@ -22,11 +22,11 @@ const UserSchema = new mongoose.Schema({
 
 // ─── Auto-generate userId before every insert ─────────────────────────────
 // This runs only on new documents (isNew guard), so existing users are safe.
-UserSchema.pre('save', function (next) {
+UserSchema.pre('save', async function () {
   if (this.isNew && !this.userId) {
-    this.userId = crypto.randomBytes(4).toString('hex'); // 8-char unique hex
+    this.userId       = crypto.randomBytes(4).toString('hex'); // 8-char unique hex
+    this.referralCode = this.userId; // set both here — no need for double save in auth.js
   }
-  next();
 });
 
 module.exports = mongoose.model('User', UserSchema);
