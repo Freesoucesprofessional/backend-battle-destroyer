@@ -30,7 +30,7 @@ app.use(helmet({
       styleSrcElem: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", "https://backend-battle-destroyer.onrender.com"],
     }
   },
   hsts: {
@@ -46,11 +46,22 @@ app.use(helmet({
 
 // ===== CORS PROTECTION =====
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: function (origin, callback) {
+    const allowedOrigins = [
+      'https://battle-destroyer.shop',
+      'https://www.battle-destroyer.shop',
+      'http://localhost:3000'
+    ];
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Admin-Token'],
-  maxAge: 86400 // 24 hours
+  maxAge: 86400
 }));
 
 // ===== BODY PARSERS WITH SIZE LIMITS =====
