@@ -98,9 +98,9 @@ const adminLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: false,
-  ipKeyGenerator: (req, res) => {
+  keyGenerator: (req, res) => {
     // Rate limit by IP + Admin ID for better tracking
-    return `${req.ip}:${req.headers['x-admin-token'] || 'anonymous'}`;
+    return `${ipKeyGenerator(req)}:${req.headers['x-admin-token'] || 'anonymous'}`;
   }
 });
 app.use('/api/admin', adminLimiter);
@@ -113,9 +113,9 @@ const resellerLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
-  ipKeyGenerator: (req, res) => {
+  keyGenerator: (req, res) => {
     // Rate limit by reseller ID
-    return `${req.ip}:${req.resellerId || 'anonymous'}`;
+    return `${ipKeyGenerator(req)}:${req.resellerId || 'anonymous'}`;
   }
 });
 app.use('/api/reseller', resellerLimiter);
