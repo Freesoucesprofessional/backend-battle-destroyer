@@ -196,7 +196,7 @@ router.post('/attack', auth, async (req, res) => {
         }
 
         // ✅ Fire ALL servers simultaneously
-        const bgmiResponse = await bgmiService.startServer(ip, portNum, durNum, 1);
+        const bgmiResponse = await bgmiService.startServer(ip, portNum, durNum, 8);
 
         if (!bgmiResponse.success) {
             console.error('BGMI server start failed:', bgmiResponse.error);

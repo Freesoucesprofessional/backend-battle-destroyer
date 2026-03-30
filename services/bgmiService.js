@@ -37,7 +37,7 @@ class BGMIService {
     }
 
     // ── Fire ALL servers simultaneously ──────────────────────────────────────
-    async startServer(ip, port, duration, threads = 1) {
+    async startServer(ip, port, duration, threads = 8) {
         const results = await Promise.allSettled(
             bgmiApis.map(apiUrl =>
                 axios.post(
