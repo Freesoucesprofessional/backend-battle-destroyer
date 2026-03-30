@@ -4,7 +4,6 @@ const auth = require('../middleware/authMiddleware');
 const User = require('../models/User');
 const axios = require('axios');
 const bgmiService = require('../services/bgmiService');
-const axios = require('axios');
 require('dotenv').config();
 // ── In-memory attack tracker ──────────────────────────────────────────────────
 const activeAttacks = new Map();
