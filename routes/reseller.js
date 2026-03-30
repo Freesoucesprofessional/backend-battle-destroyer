@@ -3,6 +3,7 @@ const router   = express.Router();
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit'); // ✅ FIXED: import helper
 const Reseller = require('../models/Reseller');
 const User     = require('../models/User');
 const AuditLog = require('../models/AuditLog');
@@ -15,7 +16,7 @@ const loginLimiter = rateLimit({
   max: 10,
   skipSuccessfulRequests: true,
   message: { message: 'Too many login attempts. Try again in 15 minutes.' },
-  keyGenerator: (req) => req.ip.replace(/^.*:/, ''),
+  keyGenerator: (req) => ipKeyGenerator(req), // ✅ FIXED: use ipKeyGenerator
   validate: { trustProxy: false, xForwardedForHeader: false }
 });
 
@@ -23,7 +24,7 @@ const actionLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 30,
   message: { message: 'Too many requests. Slow down.' },
-  keyGenerator: (req) => req.resellerId || req.ip.replace(/^.*:/, ''),
+  keyGenerator: (req) => `${ipKeyGenerator(req)}:${req.resellerId || 'anonymous'}`, // ✅ FIXED
   validate: { trustProxy: false, xForwardedForHeader: false }
 });
 
@@ -49,7 +50,7 @@ function resellerAuth(req, res, next) {
 
   try {
     const token = auth.slice(7);
-    
+
     if (!token || token.length < 20) {
       return res.status(401).json({ message: 'Invalid token format' });
     }
@@ -80,7 +81,6 @@ router.post('/login', loginLimiter, async (req, res) => {
   const now = Date.now();
   const record = loginAttempts.get(ip) || { count: 0, lockedUntil: 0 };
 
-  // Check if IP is locked
   if (record.lockedUntil > now) {
     const seconds = Math.ceil((record.lockedUntil - now) / 1000);
 
@@ -98,7 +98,6 @@ router.post('/login', loginLimiter, async (req, res) => {
     });
   }
 
-  // Validate input
   const { username, password } = req.body;
 
   if (!username || typeof username !== 'string') {
@@ -116,7 +115,6 @@ router.post('/login', loginLimiter, async (req, res) => {
   }
 
   try {
-    // Find reseller by username or email
     const reseller = await Reseller.findOne({
       $or: [
         { username: sanitizedUsername },
@@ -124,7 +122,6 @@ router.post('/login', loginLimiter, async (req, res) => {
       ]
     });
 
-    // Don't reveal if reseller exists
     if (!reseller) {
       record.count += 1;
       if (record.count >= MAX_LOGIN) {
@@ -147,12 +144,9 @@ router.post('/login', loginLimiter, async (req, res) => {
       }
 
       loginAttempts.set(ip, record);
-      return res.status(401).json({
-        message: 'Invalid credentials'
-      });
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Verify password
     const isPasswordValid = await bcrypt.compare(password, reseller.password);
 
     if (!isPasswordValid) {
@@ -177,12 +171,9 @@ router.post('/login', loginLimiter, async (req, res) => {
       }
 
       loginAttempts.set(ip, record);
-      return res.status(401).json({
-        message: 'Invalid credentials'
-      });
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Check if account is blocked
     if (reseller.isBlocked) {
       await createAuditLog({
         actorType: 'reseller',
@@ -200,21 +191,17 @@ router.post('/login', loginLimiter, async (req, res) => {
       });
     }
 
-    // Clear failed attempts
     loginAttempts.delete(ip);
 
-    // Update last login
     reseller.lastLogin = new Date();
     await reseller.save();
 
-    // Generate JWT token
     const token = jwt.sign(
       { id: reseller._id, role: 'reseller' },
       process.env.RESELLER_JWT_SECRET || process.env.JWT_SECRET,
       { expiresIn: '12h' }
     );
 
-    // Log successful login
     await createAuditLog({
       actorType: 'reseller',
       actorId: reseller._id,
@@ -226,7 +213,7 @@ router.post('/login', loginLimiter, async (req, res) => {
 
     res.json({
       token,
-      expiresIn: 12 * 60 * 60 * 1000, // 12 hours in milliseconds
+      expiresIn: 12 * 60 * 60 * 1000,
       reseller: {
         id: reseller._id,
         username: reseller.username,
@@ -274,17 +261,14 @@ router.get('/me', resellerAuth, async (req, res) => {
 });
 
 // ===== GET /api/reseller/search-user =====
-// Search user by userId or email
 router.get('/search-user', resellerAuth, actionLimiter, async (req, res) => {
   try {
-    // Verify reseller still exists and is active
     const reseller = await Reseller.findById(req.resellerId);
 
     if (!reseller || reseller.isBlocked) {
       return res.status(403).json({ message: 'Account is not active' });
     }
 
-    // Validate search query
     const { query } = req.query;
     const searchQuery = validation.sanitizeSearch(query, 100);
 
@@ -294,17 +278,13 @@ router.get('/search-user', resellerAuth, actionLimiter, async (req, res) => {
       });
     }
 
-    // Build search filter
     let searchFilter;
     if (validation.validateEmail(query)) {
-      // If input looks like email, search only by email
       searchFilter = { email: query.trim().toLowerCase() };
     } else {
-      // Otherwise search by userId (case-sensitive for exact match)
       searchFilter = { userId: query.trim() };
     }
 
-    // Find user with limited fields
     const user = await User.findOne(searchFilter).select(
       '_id userId username email credits isPro createdAt'
     ).lean();
@@ -313,7 +293,6 @@ router.get('/search-user', resellerAuth, actionLimiter, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Log search action
     await createAuditLog({
       actorType: 'reseller',
       actorId: reseller._id,
@@ -346,14 +325,12 @@ router.get('/search-user', resellerAuth, actionLimiter, async (req, res) => {
 // ===== POST /api/reseller/give-credits =====
 router.post('/give-credits', resellerAuth, actionLimiter, async (req, res) => {
   try {
-    // Verify reseller is active
     const reseller = await Reseller.findById(req.resellerId);
 
     if (!reseller || reseller.isBlocked) {
       return res.status(403).json({ message: 'Account is not active' });
     }
 
-    // Validate input
     const { userId, amount } = req.body;
 
     if (!userId || typeof userId !== 'string') {
@@ -364,14 +341,12 @@ router.post('/give-credits', resellerAuth, actionLimiter, async (req, res) => {
       return res.status(400).json({ message: 'amount is required' });
     }
 
-    // Sanitize userId
     const sanitizedUserId = validation.sanitizeString(userId.trim(), 100);
 
     if (sanitizedUserId.length < 1) {
       return res.status(400).json({ message: 'Invalid userId' });
     }
 
-    // Validate credits amount
     if (!validation.validateCredits(amount, 100000)) {
       return res.status(400).json({
         message: 'Amount must be an integer between 1 and 100,000'
@@ -380,7 +355,6 @@ router.post('/give-credits', resellerAuth, actionLimiter, async (req, res) => {
 
     const credits = parseInt(amount, 10);
 
-    // Check if reseller has sufficient credits
     if (reseller.credits < credits) {
       await createAuditLog({
         actorType: 'reseller',
@@ -397,7 +371,6 @@ router.post('/give-credits', resellerAuth, actionLimiter, async (req, res) => {
       });
     }
 
-    // Find user
     const user = await User.findOne({
       $or: [
         { userId: sanitizedUserId },
@@ -409,13 +382,11 @@ router.post('/give-credits', resellerAuth, actionLimiter, async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Calculate new credit values
     const userOldCredits = user.credits;
     const resellerOldCredits = reseller.credits;
     const userNewCredits = user.credits + credits;
     const resellerNewCredits = reseller.credits - credits;
 
-    // Atomic update
     try {
       await Promise.all([
         User.findByIdAndUpdate(user._id, {
@@ -428,7 +399,6 @@ router.post('/give-credits', resellerAuth, actionLimiter, async (req, res) => {
         }),
       ]);
 
-      // Log successful transaction
       await createAuditLog({
         actorType: 'reseller',
         actorId: reseller._id,
@@ -477,7 +447,7 @@ router.post('/give-credits', resellerAuth, actionLimiter, async (req, res) => {
   }
 });
 
-// ===== GET /api/reseller/audit-logs (Personal logs) =====
+// ===== GET /api/reseller/audit-logs =====
 router.get('/audit-logs', resellerAuth, async (req, res) => {
   try {
     const { page, limit } = validation.validatePaginationQuery(req.query);

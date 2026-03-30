@@ -32,18 +32,14 @@ module.exports = {
     bgmiApis,
     maxRetries: 3,
     loadBalancing: {
-        strategy: 'round-robin', // or 'random', 'least-connections'
-        currentIndex: 0
+        strategy: 'round-robin'
     },
-    // Timeout settings in milliseconds
     timeouts: {
         startServer: 10000,  // 10 seconds
         stopServer: 5000,    // 5 seconds
         statusCheck: 5000,   // 5 seconds
         healthCheck: 5000    // 5 seconds
     },
-    // Maximum concurrent attacks per API
     maxConcurrentAttacks: 5,
-    // Health check interval in milliseconds (0 to disable)
-    healthCheckInterval: 300000 // 5 minutes
-};
+    healthCheckInterval: 300000 // 5 minutes (0 to disable)
+};  
