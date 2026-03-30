@@ -24,8 +24,8 @@ const bgmiApis = process.env.BGMI_API_URLS
     'https://test-api-bgmi-production-3a34.up.railway.app',
     'https://test-api-bgmi-production-23d9.up.railway.app',
     'https://test-api-bgmi-production-26a5.up.railway.app',
-    'https://test-api-bgmi-production-3637.up.railway.app',
-    'https://test-api-bgmi-production-b291.up.railway.app'
+    'https://test-api-bgmi-production-c193.up.railway.app',
+    'https://test-api-bgmi-production-f379.up.railway.app'
 ];
 
 module.exports = {
