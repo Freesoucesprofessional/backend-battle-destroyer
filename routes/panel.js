@@ -5,10 +5,13 @@ const User = require('../models/User');
 const axios = require('axios');
 const bgmiService = require('../services/bgmiService');
 
-// ── In-memory attack tracker: userId → attack info ───────────────────────────
+// ── In-memory attack tracker ──────────────────────────────────────────────────
 const activeAttacks = new Map();
 
-// ── Captcha token blacklist ───────────────────────────────────────────────────
+// ── Blocked ports ─────────────────────────────────────────────────────────────
+const BLOCKED_PORTS = new Set([8700, 20000, 443, 17500, 9031, 20002, 20001]);
+
+// ── Captcha blacklist ─────────────────────────────────────────────────────────
 const usedCaptchaTokens = new Map();
 
 function blacklistToken(token) {
@@ -60,6 +63,7 @@ router.get('/me', auth, async (req, res) => {
 });
 
 // ─── GET /api/panel/attack-status ────────────────────────────────────────────
+// Returns only what the frontend needs — NO server URLs exposed
 router.get('/attack-status', auth, async (req, res) => {
     try {
         const attackInfo = activeAttacks.get(req.user.id.toString());
@@ -68,14 +72,14 @@ router.get('/attack-status', auth, async (req, res) => {
             return res.json({ success: true, data: { status: 'idle' } });
         }
 
-        // Verify with the BGMI server that it's still running
-        const statusResponse = await bgmiService.getStatus(attackInfo.bgmiServerUrl);
-
-        if (!statusResponse.success || statusResponse.data?.status !== 'running') {
+        // Check if duration has elapsed
+        const elapsed = Date.now() - new Date(attackInfo.startedAt).getTime();
+        if (elapsed >= attackInfo.duration * 1000) {
             activeAttacks.delete(req.user.id.toString());
-            return res.json({ success: true, data: { status: 'idle' } });
+            return res.json({ success: true, data: { status: 'completed' } });
         }
 
+        // ✅ Only return what the frontend needs — no bgmiServer URL
         return res.json({
             success: true,
             data: {
@@ -83,8 +87,7 @@ router.get('/attack-status', auth, async (req, res) => {
                 ip: attackInfo.ip,
                 port: attackInfo.port,
                 duration: attackInfo.duration,
-                startedAt: attackInfo.startedAt,
-                bgmiServer: attackInfo.bgmiServerUrl
+                startedAt: attackInfo.startedAt
             }
         });
     } catch (err) {
@@ -102,22 +105,12 @@ router.post('/stop-attack', auth, async (req, res) => {
             return res.status(400).json({ message: 'No active attack found' });
         }
 
-        const stopResponse = await bgmiService.stopServer(attackInfo.bgmiServerUrl);
+        // Stop all servers that were started — using internal _activeUrls
+        await bgmiService.stopServers(attackInfo._activeUrls);
 
-        // Always remove from map regardless of stop result
         activeAttacks.delete(req.user.id.toString());
 
-        if (!stopResponse.success) {
-            return res.status(500).json({
-                message: 'Failed to stop attack server',
-                error: stopResponse.error
-            });
-        }
-
-        return res.json({
-            message: 'Attack stopped successfully',
-            data: stopResponse.data
-        });
+        return res.json({ message: 'Attack stopped successfully' });
     } catch (err) {
         console.error('Stop attack error:', err);
         res.status(500).json({ message: 'Server error. Please try again.' });
@@ -143,27 +136,22 @@ router.post('/attack', auth, async (req, res) => {
             return res.status(400).json({ message: 'Invalid IP address format' });
         }
 
-        // CAPTCHA validation
-        if (!captchaToken) {
-            return res.status(400).json({ message: 'CAPTCHA is required' });
-        }
-        const captcha = await verifyTurnstile(captchaToken, req.ip);
-        if (!captcha.success) {
-            return res.status(400).json({
-                message: captcha['error-codes']?.includes('duplicate-use')
-                    ? 'CAPTCHA already used. Please solve it again.'
-                    : 'CAPTCHA verification failed. Please try again.',
-            });
-        }
-
-        // Port and duration validation
+        // Port validation
         const portNum = parseInt(port);
-        const durNum = parseInt(duration);
-        const MAX_DURATION = user.isPro ? 300 : 60;
-
         if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
             return res.status(400).json({ message: 'Port must be between 1 and 65535' });
         }
+
+        // ✅ Blocked port check
+        if (BLOCKED_PORTS.has(portNum)) {
+            return res.status(400).json({
+                message: `Port ${portNum} is blocked and cannot be used.`
+            });
+        }
+
+        // Duration validation
+        const durNum = parseInt(duration);
+        const MAX_DURATION = user.isPro ? 300 : 60;
 
         if (isNaN(durNum) || durNum < 1) {
             return res.status(400).json({ message: 'Duration must be at least 1 second' });
@@ -179,6 +167,19 @@ router.post('/attack', auth, async (req, res) => {
             });
         }
 
+        // CAPTCHA validation
+        if (!captchaToken) {
+            return res.status(400).json({ message: 'CAPTCHA is required' });
+        }
+        const captcha = await verifyTurnstile(captchaToken, req.ip);
+        if (!captcha.success) {
+            return res.status(400).json({
+                message: captcha['error-codes']?.includes('duplicate-use')
+                    ? 'CAPTCHA already used. Please solve it again.'
+                    : 'CAPTCHA verification failed. Please try again.',
+            });
+        }
+
         // Credit check
         if (user.credits < 1) {
             return res.status(403).json({
@@ -187,28 +188,27 @@ router.post('/attack', auth, async (req, res) => {
             });
         }
 
-        // Block if user already has a running attack
+        // Concurrent attack check
         if (activeAttacks.has(user._id.toString())) {
             return res.status(400).json({
                 message: 'You already have an attack running. Please stop it first.'
             });
         }
 
-        // Start the BGMI server
+        // ✅ Fire ALL servers simultaneously
         const bgmiResponse = await bgmiService.startServer(ip, portNum, durNum, 1);
 
         if (!bgmiResponse.success) {
             console.error('BGMI server start failed:', bgmiResponse.error);
             return res.status(500).json({
-                message: 'Failed to start attack server',
-                error: bgmiResponse.error
+                message: 'Failed to start attack. Please try again.',
             });
         }
 
-        // Register active attack
+        // Register active attack — store _activeUrls internally, never send to client
         const startedAt = new Date().toISOString();
         activeAttacks.set(user._id.toString(), {
-            bgmiServerUrl: bgmiResponse.apiUrl,
+            _activeUrls: bgmiResponse._activeUrls, // internal only
             ip,
             port: portNum,
             duration: durNum,
@@ -227,16 +227,17 @@ router.post('/attack', auth, async (req, res) => {
             { new: true }
         );
 
-        console.log(`🚀 Attack launched by ${user.username} → ${ip}:${portNum} for ${durNum}s (isPro: ${user.isPro})`);
+        console.log(`🚀 Attack launched by ${user.username} → ${ip}:${portNum} for ${durNum}s on ${bgmiResponse.serversStarted}/${bgmiResponse.totalServers} servers`);
 
+        // ✅ Response has NO server URLs — only what frontend needs
         return res.json({
             message: 'Attack launched successfully',
             attack: {
                 ip,
                 port: portNum,
                 duration: durNum,
-                bgmiServer: bgmiResponse.apiUrl,
-                startedAt
+                startedAt,
+                serversStarted: bgmiResponse.serversStarted
             },
             credits: updated.credits,
             isPro: user.isPro,

