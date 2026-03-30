@@ -30,7 +30,7 @@ app.use(helmet({
       styleSrcElem: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", "https://backend-battle-destroyer.onrender.com"],
+      connectSrc: ["'self'", "https://api.battle-destroyer.shop"],
     }
   },
   hsts: {
@@ -76,7 +76,7 @@ const csrfProtection = csrf({
   cookie: {
     httpOnly: true,
     secure: true, 
-    sameSite: 'none'
+    sameSite: 'lax'
   }
 });
 
