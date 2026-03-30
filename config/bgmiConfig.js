@@ -1,5 +1,7 @@
 // config/bgmiConfig.js
-const bgmiApis = [
+const bgmiApis = process.env.BGMI_API_URLS
+    ? process.env.BGMI_API_URLS.split(',')
+    : [
     'https://test-api-bgmi-production-4bae.up.railway.app',
     'https://test-api-bgmi-production-3e6b.up.railway.app',
     'https://test-api-bgmi-production-4150.up.railway.app',

@@ -38,7 +38,7 @@ app.use(helmet({
       connectSrc: [
         "'self'",
         "https://api.battle-destroyer.shop",
-        ...process.env.BGMI_API_URLS.split(',') // Add BGMI API URLs
+        ...(process.env.BGMI_API_URLS ? process.env.BGMI_API_URLS.split(',') : [])// Add BGMI API URLs
       ],
     }
   },
