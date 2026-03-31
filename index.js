@@ -123,7 +123,12 @@ const globalLimiter = rateLimit({
   message: { message: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => process.env.NODE_ENV !== 'production',
+  skip: (req) => {
+    // Skip rate limit in dev AND for public stats endpoint
+    if (process.env.NODE_ENV !== 'production') return true;
+    if (req.path === '/panel/stats') return true;
+    return false;
+  },
 });
 app.use('/api/', globalLimiter);
 
