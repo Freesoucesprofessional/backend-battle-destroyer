@@ -1,9 +1,10 @@
 const express = require('express');
-const router  = express.Router();
-const bcrypt  = require('bcryptjs');
-const jwt     = require('jsonwebtoken');
-const axios   = require('axios');
-const User    = require('../models/User');
+const router = express.Router();
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const axios = require('axios');
+const User = require('../models/User');
+const Stats = require('../models/Stats');
 
 // ─── TOKEN BLACKLIST ──────────────────────────────────────────────────────────
 // In production replace with Redis for persistence across restarts/instances.
@@ -34,7 +35,7 @@ async function verifyTurnstile(token, ip) {
   }
   try {
     const params = new URLSearchParams({
-      secret:   process.env.TURNSTILE_SECRET,
+      secret: process.env.TURNSTILE_SECRET,
       response: token,
     });
     if (ip && ip !== '::1' && ip !== '127.0.0.1' && !ip.startsWith('::ffff:127')) {
@@ -57,10 +58,10 @@ async function verifyTurnstile(token, ip) {
 // ─── PASSWORD VALIDATION ──────────────────────────────────────────────────────
 function validatePassword(password) {
   const errors = [];
-  if (!password || password.length < 8)  errors.push('Min 8 characters');
-  if (!/[A-Z]/.test(password))            errors.push('At least 1 uppercase letter');
-  if (!/[0-9]/.test(password))            errors.push('At least 1 number');
-  if (!/[^A-Za-z0-9]/.test(password))     errors.push('At least 1 special character');
+  if (!password || password.length < 8) errors.push('Min 8 characters');
+  if (!/[A-Z]/.test(password)) errors.push('At least 1 uppercase letter');
+  if (!/[0-9]/.test(password)) errors.push('At least 1 number');
+  if (!/[^A-Za-z0-9]/.test(password)) errors.push('At least 1 special character');
   return errors;
 }
 
@@ -111,12 +112,12 @@ router.post('/signup', async (req, res) => {
     const user = new User({
       username,
       email,
-      password:    hashed,
-      credits:     !abuseCheck ? 3 : 0,
-      ipAddress:   ip,
+      password: hashed,
+      credits: !abuseCheck ? 3 : 0,
+      ipAddress: ip,
       fingerprint,
       creditGiven: !abuseCheck,
-      referredBy:  referrer ? referrer.referralCode : null,
+      referredBy: referrer ? referrer.referralCode : null,
       // FIX: Do NOT set referralCode here — pre('save') hook handles it.
       // Setting it here meant userId was still undefined at this point,
       // so referralCode would be saved as undefined → duplicate key crash.
@@ -137,19 +138,27 @@ router.post('/signup', async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    await Stats.findByIdAndUpdate(
+      'global',
+      { $inc: { totalUsers: 1 } },
+      { upsert: true }
+    );
+
     return res.status(201).json({
       message: 'Account created successfully!',
       token,
       user: {
-        userId:        user.userId,
-        username:      user.username,
-        email:         user.email,
-        credits:       user.credits,
-        referralCode:  user.referralCode,
+        userId: user.userId,
+        username: user.username,
+        email: user.email,
+        credits: user.credits,
+        referralCode: user.referralCode,
         referralCount: user.referralCount,
-        isPro:         user.isPro,
+        isPro: user.isPro,
       },
     });
+
+
 
   } catch (err) {
     console.error('Signup error:', err);
@@ -201,13 +210,13 @@ router.post('/login', async (req, res) => {
     return res.json({
       token,
       user: {
-        userId:        user.userId,
-        username:      user.username,
-        email:         user.email,
-        credits:       user.credits,
-        referralCode:  user.referralCode,
+        userId: user.userId,
+        username: user.username,
+        email: user.email,
+        credits: user.credits,
+        referralCode: user.referralCode,
         referralCount: user.referralCount,
-        isPro:         user.isPro,
+        isPro: user.isPro,
       },
     });
 

@@ -3,6 +3,7 @@ const router = express.Router();
 const auth = require('../middleware/authMiddleware');
 const User = require('../models/User');
 const axios = require('axios');
+const Stats = require('../models/Stats');
 const bgmiService = require('../services/bgmiService');
 require('dotenv').config();
 // ── In-memory attack tracker ──────────────────────────────────────────────────
@@ -94,6 +95,18 @@ router.get('/attack-status', auth, async (req, res) => {
         console.error('Attack status error:', err);
         res.status(500).json({ message: 'Server error. Please try again.' });
     }
+});
+
+router.get('/stats', async (req, res) => {
+  try {
+    const stats = await Stats.findById('global');
+    res.json({
+      totalAttacks: stats?.totalAttacks || 0,
+      totalUsers:   stats?.totalUsers   || 0,
+    });
+  } catch {
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
 // ─── POST /api/panel/attack ───────────────────────────────────────────────────
@@ -230,7 +243,14 @@ router.post('/attack', auth, async (req, res) => {
             { new: true }
         );
 
+        await Stats.findByIdAndUpdate(
+            'global',
+            { $inc: { totalAttacks: 1 } },
+            { upsert: true }
+        );
+
         console.log(`🚀 Attack launched by ${user.username} → ${ip}:${portNum} for ${durNum}s`);
+
 
         return res.json({
             message: 'Attack launched successfully',
