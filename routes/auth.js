@@ -71,10 +71,19 @@ router.post('/signup', async (req, res) => {
   try {
     const { username, email, password, captchaToken, fingerprint, referralCode } = req.body;
 
-    // ── Normalize IP (fixes localhost IPv6 variants) ──
-    let ip = req.ip || '';
+    // ── Get real IP (works on Render, VPS, localhost) ──
+    const rawIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+      || req.ip
+      || '';
+    let ip = rawIp;
     if (ip.startsWith('::ffff:')) ip = ip.slice(7);
     if (ip === '::1') ip = '127.0.0.1';
+
+    // Internal/shared IPs (Render internal network, localhost) — skip IP abuse check
+    const isInternalIp = ip.startsWith('10.') ||
+      ip.startsWith('172.16.') ||
+      ip.startsWith('192.168.') ||
+      ip === '127.0.0.1';
 
     // ── Required fields ──
     if (!username || !email || !password || !captchaToken) {
@@ -112,13 +121,9 @@ router.post('/signup', async (req, res) => {
       if (!referrer) return res.status(400).json({ message: 'Invalid referral code' });
     }
 
-    // ── Abuse check ──
-    // Build query only for fields we actually have
-    // Localhost IPs are excluded so dev/testing always gets 3 credits
-    const isLocalhost = ip === '127.0.0.1';
+    // ── Abuse check (fingerprint only on internal IPs) ──
     const abuseOrClauses = [];
-
-    if (!isLocalhost && ip) abuseOrClauses.push({ ipAddress: ip });
+    if (!isInternalIp && ip) abuseOrClauses.push({ ipAddress: ip });
     if (fingerprint) abuseOrClauses.push({ fingerprint });
 
     const abuseCheck = abuseOrClauses.length > 0
@@ -130,37 +135,40 @@ router.post('/signup', async (req, res) => {
       return res.status(400).json({ message: 'Cannot use your own referral code' });
     }
 
-    // ── Decide credits ──
-    // New unique user → 3 free credits
-    // Duplicate IP/fingerprint → 0 credits (abuse prevention)
     const isNewUniqueUser = !abuseCheck;
     const startingCredits = isNewUniqueUser ? 3 : 0;
 
-    console.log(`[Signup] ${username} | IP: ${ip} | abuse: ${!!abuseCheck} | credits: ${startingCredits}`);
+    console.log(`[Signup] ${username} | IP: ${ip} | internal: ${isInternalIp} | abuse: ${!!abuseCheck} | credits: ${startingCredits}`);
 
     // ── Create user ──
     const hashed = await bcrypt.hash(password, 12);
-
     const user = new User({
       username,
       email,
       password: hashed,
       credits: startingCredits,
-      ipAddress: isLocalhost ? null : ip,  // don't store localhost IP
+      ipAddress: isInternalIp ? null : ip,
       fingerprint: fingerprint || null,
       creditGiven: isNewUniqueUser,
       referredBy: referrer ? referrer.referralCode : null,
-      // referralCode & userId set by pre('save') hook
     });
 
     await user.save();
 
-    // ── Reward referrer ──
+    // ── Reward both sides of referral ──
     if (referrer && isNewUniqueUser) {
+      // Referrer gets +2
       await User.findByIdAndUpdate(referrer._id, {
         $inc: { credits: 2, referralCount: 1 }
       });
       console.log(`[Referral] ${referrer.username} +2 credits for referring ${username}`);
+
+      // New user also gets +2 bonus
+      await User.findByIdAndUpdate(user._id, {
+        $inc: { credits: 2 }
+      });
+      user.credits = user.credits + 2;
+      console.log(`[Referral] ${username} +2 bonus credits for using referral`);
     }
 
     // ── JWT ──
@@ -193,12 +201,10 @@ router.post('/signup', async (req, res) => {
 
   } catch (err) {
     console.error('Signup error:', err);
-
     if (err.code === 11000) {
       const field = Object.keys(err.keyPattern || {})[0] || 'field';
       return res.status(400).json({ message: `${field} already taken. Please try again.` });
     }
-
     return res.status(500).json({ message: 'Server error. Please try again.' });
   }
 });
