@@ -147,11 +147,11 @@ app.use('/api/panel/attack', attackLimiter);
 // ===== ADMIN RATE LIMITER =====
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 200,                          // ✅ raised from 10 → 200
   message: { message: 'Too many admin requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: false,
+  skipSuccessfulRequests: true,      // ✅ only failed requests count (brute force protection)
   keyGenerator: (req) => {
     return `${ipKeyGenerator(req)}:${req.headers['x-admin-token'] || 'anonymous'}`;
   },
