@@ -199,7 +199,7 @@ router.post('/attack', auth, async (req, res) => {
 
         await Stats.findByIdAndUpdate('global', { $inc: { totalAttacks: 1 } }, { upsert: true });
 
-        console.log(`[SUCCESS] Attack launched: ${user.username} | Credits left: ${updated.credits}`);
+        console.log(`[SUCCESS] Attack launched : ${user.username} | Credits left: ${updated.credits}`);
 
         return res.json({
             message: 'Attack launched successfully',
