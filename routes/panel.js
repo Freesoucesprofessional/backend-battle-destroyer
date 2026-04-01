@@ -6,7 +6,7 @@ const axios = require('axios');
 const Stats = require('../models/Stats');
 const bgmiService = require('../services/bgmiService');
 require('dotenv').config();
-
+const rateLimit = require('express-rate-limit');
 // ── In-memory attack tracker ──────────────────────────────────────────────────
 const activeAttacks = new Map();
 
@@ -104,7 +104,7 @@ const statsLimiter = rateLimit({
     message: { totalAttacks: 0, totalUsers: 0 }
 });
 
-router.get('/stats', async (req, res) => {
+router.get('/stats',statsLimiter, async (req, res) => {
   try {
     const stats = await Stats.findById('global');
     res.json({
