@@ -98,6 +98,12 @@ router.get('/attack-status', auth, async (req, res) => {
     }
 });
 
+const statsLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10, // max 10 requests per minute per IP
+    message: { totalAttacks: 0, totalUsers: 0 }
+});
+
 router.get('/stats', async (req, res) => {
   try {
     const stats = await Stats.findById('global');
