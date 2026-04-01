@@ -263,36 +263,76 @@ router.get('/stats', adminAuth, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-//  USER ROUTES
+//  USER ROUTES - FIXED WITH FILTERS & PAGINATION
 // ═══════════════════════════════════════════════
 
+/**
+ * GET /api/admin/users
+ * Query Parameters:
+ * - page (number): Page number, default 1
+ * - limit (number): Items per page, default 50 (max 100)
+ * - search (string): Search in username, email, userId
+ * - isPro (string): Filter by "true" or "false"
+ * 
+ * Response:
+ * {
+ *   "users": [...],
+ *   "total": 250,
+ *   "totalPages": 5,
+ *   "currentPage": 1
+ * }
+ */
 router.get('/users', adminAuth, async (req, res) => {
     try {
-        const { page, limit, search } = validation.validatePaginationQuery(req.query);
+        // Parse and validate query parameters
+        let page = parseInt(req.query.page) || 1;
+        let limit = parseInt(req.query.limit) || 50;
+        const search = req.query.search ? String(req.query.search).trim() : '';
+        const isPro = req.query.isPro; // Can be "true", "false", or undefined
 
-        const query = search
-            ? {
-                $or: [
-                    { username: { $regex: search, $options: 'i' } },
-                    { email: { $regex: search, $options: 'i' } },
-                    { userId: { $regex: search, $options: 'i' } },
-                ]
-            }
-            : {};
+        // Validate pagination
+        if (page < 1) page = 1;
+        if (limit < 1 || limit > 100) limit = 50;
 
+        // Build filter query
+        const query = {};
+
+        // Add search filter
+        if (search && search.length > 0) {
+            query.$or = [
+                { username: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } },
+                { userId: { $regex: search, $options: 'i' } },
+            ];
+        }
+
+        // Add isPro filter
+        if (isPro !== undefined) {
+            query.isPro = isPro === 'true'; // Convert string to boolean
+        }
+
+        // Count total matching documents
         const total = await User.countDocuments(query);
+        const totalPages = Math.ceil(total / limit);
+
+        // Ensure page is within valid range
+        if (page > totalPages && totalPages > 0) {
+            page = totalPages;
+        }
+
+        // Fetch users with pagination
         const users = await User.find(query)
-            .select('-password')
+            .select('-password') // Exclude password field
             .sort({ createdAt: -1 })
             .skip((page - 1) * limit)
             .limit(limit)
-            .lean();
+            .lean(); // Return plain objects (faster)
 
         res.json({
             users,
             total,
-            page,
-            pages: Math.ceil(total / limit)
+            totalPages,
+            currentPage: page
         });
     } catch (err) {
         console.error('❌ Get users error:', err);
@@ -426,35 +466,75 @@ router.delete('/users/:id', adminAuth, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-//  RESELLER ROUTES
+//  RESELLER ROUTES - FIXED WITH FILTERS & PAGINATION
 // ═══════════════════════════════════════════════
 
+/**
+ * GET /api/admin/resellers
+ * Query Parameters:
+ * - page (number): Page number, default 1
+ * - limit (number): Items per page, default 50 (max 100)
+ * - search (string): Search in username, email
+ * - isBlocked (string): Filter by "true" (blocked) or "false" (active)
+ * 
+ * Response:
+ * {
+ *   "resellers": [...],
+ *   "total": 150,
+ *   "totalPages": 3,
+ *   "currentPage": 1
+ * }
+ */
 router.get('/resellers', adminAuth, async (req, res) => {
     try {
-        const { page, limit, search } = validation.validatePaginationQuery(req.query);
+        // Parse and validate query parameters
+        let page = parseInt(req.query.page) || 1;
+        let limit = parseInt(req.query.limit) || 50;
+        const search = req.query.search ? String(req.query.search).trim() : '';
+        const isBlocked = req.query.isBlocked; // Can be "true", "false", or undefined
 
-        const query = search
-            ? {
-                $or: [
-                    { username: { $regex: search, $options: 'i' } },
-                    { email: { $regex: search, $options: 'i' } },
-                ]
-            }
-            : {};
+        // Validate pagination
+        if (page < 1) page = 1;
+        if (limit < 1 || limit > 100) limit = 50;
 
+        // Build filter query
+        const query = {};
+
+        // Add search filter
+        if (search && search.length > 0) {
+            query.$or = [
+                { username: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } },
+            ];
+        }
+
+        // Add isBlocked filter
+        if (isBlocked !== undefined) {
+            query.isBlocked = isBlocked === 'true'; // Convert string to boolean
+        }
+
+        // Count total matching documents
         const total = await Reseller.countDocuments(query);
+        const totalPages = Math.ceil(total / limit);
+
+        // Ensure page is within valid range
+        if (page > totalPages && totalPages > 0) {
+            page = totalPages;
+        }
+
+        // Fetch resellers with pagination
         const resellers = await Reseller.find(query)
-            .select('-password')
+            .select('-password') // Exclude password field
             .sort({ createdAt: -1 })
             .skip((page - 1) * limit)
             .limit(limit)
-            .lean();
+            .lean(); // Return plain objects (faster)
 
         res.json({
             resellers,
             total,
-            page,
-            pages: Math.ceil(total / limit)
+            totalPages,
+            currentPage: page
         });
     } catch (err) {
         console.error('❌ Get resellers error:', err);
@@ -633,7 +713,22 @@ router.delete('/resellers/:id', adminAuth, async (req, res) => {
 
 router.get('/audit-logs', adminAuth, async (req, res) => {
     try {
-        const { page, limit } = validation.validatePaginationQuery(req.query);
+        // Parse and validate query parameters
+        let page = parseInt(req.query.page) || 1;
+        let limit = parseInt(req.query.limit) || 50;
+
+        // Validate pagination
+        if (page < 1) page = 1;
+        if (limit < 1 || limit > 100) limit = 50;
+
+        // Count total documents
+        const total = await AuditLog.countDocuments();
+        const totalPages = Math.ceil(total / limit);
+
+        // Ensure page is within valid range
+        if (page > totalPages && totalPages > 0) {
+            page = totalPages;
+        }
 
         const logs = await AuditLog.find()
             .sort({ createdAt: -1 })
@@ -641,13 +736,11 @@ router.get('/audit-logs', adminAuth, async (req, res) => {
             .limit(limit)
             .lean();
 
-        const total = await AuditLog.countDocuments();
-
         res.json({
             logs,
             total,
-            page,
-            pages: Math.ceil(total / limit)
+            totalPages,
+            currentPage: page
         });
     } catch (err) {
         console.error('❌ Audit logs error:', err);

@@ -55,9 +55,6 @@ app.use(helmet({
 }));
 
 // ===== CORS PROTECTION =====
-// ✅ FIXED: BGMI Railway URLs are backend-to-backend, NOT browser origins.
-//    Never put them in allowedOrigins — they caused a crash when undefined
-//    and served no purpose since browsers never send requests from those origins.
 const allowedOrigins = [
   'https://battle-destroyer.shop',
   'https://www.battle-destroyer.shop',
@@ -116,25 +113,28 @@ app.use((req, res, next) => {
   next();
 });
 
-// ===== GLOBAL RATE LIMITER =====
+// ===== RATE LIMITERS CONFIGURATION =====
+
+// Global rate limiter (for most API endpoints)
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
+  windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100,
   message: { message: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    // Skip rate limit in dev AND for public stats endpoint
+    // Skip rate limit in dev
     if (process.env.NODE_ENV !== 'production') return true;
+    // Skip for non-critical endpoints (health checks, CSRF token, stats)
+    if (req.path === '/' || req.path === '/api/bgmi/health' || req.path === '/api/csrf-token') return true;
     if (req.path === '/panel/stats') return true;
     return false;
   },
 });
-app.use('/api/', globalLimiter);
 
-// ===== ATTACK RATE LIMITER (STRICT) =====
+// Attack rate limiter (STRICT - most sensitive endpoint)
 const attackLimiter = rateLimit({
-  windowMs: 60 * 1000,
+  windowMs: 60 * 1000, // 1 minute
   max: 5,
   message: { message: 'Too many attack requests, please try again later.' },
   standardHeaders: true,
@@ -142,26 +142,24 @@ const attackLimiter = rateLimit({
   keyGenerator: ipKeyGenerator,
   skip: (req) => !req.path.includes('attack')
 });
-app.use('/api/panel/attack', attackLimiter);
 
-// ===== ADMIN RATE LIMITER =====
+// Admin rate limiter (for admin panel operations)
 const adminLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 200,                          // ✅ raised from 10 → 200
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200,
   message: { message: 'Too many admin requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: true,      // ✅ only failed requests count (brute force protection)
+  skipSuccessfulRequests: true, // Only count failed requests (brute force protection)
   keyGenerator: (req) => {
     return `${ipKeyGenerator(req)}:${req.headers['x-admin-token'] || 'anonymous'}`;
   },
   validate: { trustProxy: false, xForwardedForHeader: false }
 });
-app.use('/api/admin', adminLimiter);
 
-// ===== RESELLER RATE LIMITER =====
+// Reseller rate limiter
 const resellerLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
+  windowMs: 15 * 60 * 1000, // 15 minutes
   max: 60,
   message: { message: 'Too many reseller requests, please try again later.' },
   standardHeaders: true,
@@ -172,9 +170,18 @@ const resellerLimiter = rateLimit({
   },
   validate: { trustProxy: false, xForwardedForHeader: false }
 });
+
+// Apply global limiter to all /api routes (but with skip conditions above)
+app.use('/api/', globalLimiter);
+
+// Apply attack limiter
+app.use('/api/panel/attack', attackLimiter);
+
+// Apply admin and reseller limiters
+app.use('/api/admin', adminLimiter);
 app.use('/api/reseller', resellerLimiter);
 
-// ===== HEALTH CHECK =====
+// ===== HEALTH CHECK - NO RATE LIMIT =====
 app.get('/', async (req, res) => {
   try {
     const bgmiHealth = await bgmiService.checkHealth();
@@ -198,7 +205,7 @@ app.get('/', async (req, res) => {
   }
 });
 
-// ===== BGMI HEALTH CHECK ENDPOINT =====
+// ===== BGMI HEALTH CHECK ENDPOINT - NO RATE LIMIT =====
 app.get('/api/bgmi/health', async (req, res) => {
   try {
     const health = await bgmiService.checkHealth();
@@ -212,12 +219,12 @@ app.get('/api/bgmi/health', async (req, res) => {
   }
 });
 
-// ===== CSRF TOKEN ENDPOINT =====
+// ===== CSRF TOKEN ENDPOINT - NO RATE LIMIT =====
 app.get('/api/csrf-token', csrfProtection, (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
 });
 
-// ===== ROUTES =====
+// ===== ROUTES (with CSRF protection on admin & reseller) =====
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/panel', require('./routes/panel'));
 app.use('/api/admin', csrfProtection, require('./routes/admin'));
@@ -285,6 +292,12 @@ mongoose.connect(process.env.MONGO_URI, {
       console.log(`🛡️  CSRF Protection: Enabled`);
       console.log(`📦 Max Request Size: 10KB`);
       console.log(`🔗 BGMI APIs: ${bgmiService.getApiCount()} endpoints configured`);
+      console.log(`\n📊 Rate Limiting Configuration:`);
+      console.log(`   ├─ Global API: 100 req/15min (production)`);
+      console.log(`   ├─ Attack Endpoint: 5 req/1min (STRICT)`);
+      console.log(`   ├─ Admin Endpoints: 200 req/15min`);
+      console.log(`   ├─ Reseller Endpoints: 60 req/15min`);
+      console.log(`   └─ Health Checks: ✅ Unlimited (no rate limit)`);
     });
 
     process.on('SIGTERM', async () => {
