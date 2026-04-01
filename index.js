@@ -327,13 +327,11 @@ mongoose.connect(process.env.MONGO_URI, {
 // ===== HANDLE UNHANDLED PROMISE REJECTIONS =====
 process.on('unhandledRejection', (err) => {
   console.error('❌ Unhandled Promise Rejection:', err);
-  process.exit(1);
 });
 
 // ===== HANDLE UNCAUGHT EXCEPTIONS =====
 process.on('uncaughtException', (err) => {
   console.error('❌ Uncaught Exception:', err);
-  process.exit(1);
 });
 
 module.exports = app;
