@@ -319,29 +319,45 @@ router.get('/users', adminAuth, async (req, res) => {
     if (page < 1) page = 1;
     if (limit < 1 || limit > 100) limit = 50;
 
-    const query = {};
+    const conditions = [];
 
+    // ── Search condition ──
     if (search.length > 0) {
-      query.$or = [
-        { username: { $regex: search, $options: 'i' } },
-        { email:    { $regex: search, $options: 'i' } },
-        { userId:   { $regex: search, $options: 'i' } }
-      ];
+      conditions.push({
+        $or: [
+          { username: { $regex: search, $options: 'i' } },
+          { email:    { $regex: search, $options: 'i' } },
+          { userId:   { $regex: search, $options: 'i' } },
+        ]
+      });
     }
 
+    // ── Subscription filter ──
     if (subscriptionType === 'pro') {
-      query['subscription.type'] = 'pro';
-      query['subscription.expiresAt'] = { $gt: new Date() };
+      conditions.push({
+        $and: [
+          { 'subscription.type': 'pro' },
+          { 'subscription.expiresAt': { $gt: new Date() } }
+        ]
+      });
     } else if (subscriptionType === 'free') {
-      query.$or = [
-        { 'subscription.type': 'free' },
-        { 'subscription.expiresAt': { $lte: new Date() } }
-      ];
+      conditions.push({
+        $or: [
+          { 'subscription.type': 'free' },
+          { 'subscription.type': { $exists: false } },
+          { 'subscription.expiresAt': null },
+          { 'subscription.expiresAt': { $exists: false } },
+          { 'subscription.expiresAt': { $lte: new Date() } }
+        ]
+      });
     }
+
+    // ── Combine with $and ──
+    const query = conditions.length > 0 ? { $and: conditions } : {};
 
     const total = await User.countDocuments(query);
-    const totalPages = Math.ceil(total / limit);
-    if (page > totalPages && totalPages > 0) page = totalPages;
+    const totalPages = Math.ceil(total / limit) || 1;
+    if (page > totalPages) page = totalPages;
 
     const users = await User.find(query)
       .select('-password')
@@ -350,19 +366,28 @@ router.get('/users', adminAuth, async (req, res) => {
       .limit(limit)
       .lean();
 
-    const usersWithStatus = users.map(user => ({
-      ...user,
-      isPro: user.subscription?.type === 'pro' && user.subscription?.expiresAt > new Date(),
-      subscriptionStatus: {
-        active: user.subscription?.type === 'pro' && user.subscription?.expiresAt > new Date(),
-        daysLeft: user.subscription?.expiresAt
-          ? Math.ceil((new Date(user.subscription.expiresAt) - new Date()) / (1000 * 60 * 60 * 24))
-          : 0,
-        plan: user.subscription?.plan || 'none',
-        expiresAt: user.subscription?.expiresAt
-      },
-      remainingAttacks: user.isProUser ? user.subscription?.dailyCredits : user.credits
-    }));
+    const usersWithStatus = users.map(user => {
+      const isProActive =
+        user.subscription?.type === 'pro' &&
+        user.subscription?.expiresAt &&
+        new Date(user.subscription.expiresAt) > new Date();
+
+      return {
+        ...user,
+        isPro: isProActive,
+        subscriptionStatus: {
+          active:    isProActive,
+          daysLeft:  user.subscription?.expiresAt
+            ? Math.ceil((new Date(user.subscription.expiresAt) - new Date()) / 86400000)
+            : 0,
+          plan:      user.subscription?.plan || 'none',
+          expiresAt: user.subscription?.expiresAt
+        },
+        remainingAttacks: isProActive
+          ? user.subscription?.dailyCredits
+          : user.credits
+      };
+    });
 
     res.json({ users: usersWithStatus, total, totalPages, currentPage: page });
   } catch (err) {
