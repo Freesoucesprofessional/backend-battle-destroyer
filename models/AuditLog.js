@@ -1,14 +1,14 @@
-// models/AuditLog.js
+// models/AuditLog.js - FIXED with API User actions
 const mongoose = require('mongoose');
 
 const AuditLogSchema = new mongoose.Schema({
   actorType: {
     type: String,
-    enum: ['user', 'admin', 'reseller', 'system'],
+    enum: ['user', 'admin', 'reseller', 'system', 'api_user'],  // Added 'api_user'
     required: true
   },
   actorId: {
-    type: mongoose.Schema.Types.Mixed, // ObjectId OR admin token string
+    type: mongoose.Schema.Types.Mixed,
     default: null
   },
   action: {
@@ -44,8 +44,18 @@ const AuditLogSchema = new mongoose.Schema({
       'EXTEND_PRO_SUBSCRIPTION',
       'REPLACE_PRO_SUBSCRIPTION',
       'RESET_DAILY_LIMIT',
-      'ADD_CREDITS',    // used by admin AND reseller add-credits route
+      'ADD_CREDITS',
       'REMOVE_CREDITS',
+
+      // ── API User actions ──────────────────────────────────────────────────
+      'CREATE_API_USER',        // Added
+      'UPDATE_API_USER',        // Added
+      'DELETE_API_USER',        // Added
+      'REGENERATE_API_SECRET',  // Added
+      'EXTEND_API_USER',        // Added
+      'SET_API_USER_EXPIRATION', // Added
+      'API_USER_LOGIN',         // Added
+      'API_USER_LOGOUT',        // Added
 
       // ── Reseller actions ──────────────────────────────────────────────────
       'RESELLER_LOGIN',
@@ -58,11 +68,11 @@ const AuditLogSchema = new mongoose.Schema({
   },
   targetType: {
     type: String,
-    enum: ['user', 'admin', 'reseller', 'system', null],
+    enum: ['user', 'admin', 'reseller', 'system', 'api_user', null],  // Added 'api_user'
     default: null
   },
   targetId: {
-    type: mongoose.Schema.Types.Mixed, // ObjectId or null
+    type: mongoose.Schema.Types.Mixed,
     default: null
   },
   changes: {
@@ -94,7 +104,6 @@ const AuditLogSchema = new mongoose.Schema({
 // ── Indexes ───────────────────────────────────────────────────────────────────
 AuditLogSchema.index({ createdAt: -1 });
 AuditLogSchema.index({ actorType: 1, actorId: 1 });
-// Compound index used by GET /resellers/:id/stats  (the most frequent heavy query)
 AuditLogSchema.index({ actorType: 1, actorId: 1, action: 1, success: 1 });
 AuditLogSchema.index({ action: 1 });
 AuditLogSchema.index({ targetType: 1, targetId: 1 });

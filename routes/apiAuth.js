@@ -21,9 +21,18 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
         
+        // CHECK EXPIRATION FIRST
+        if (apiUser.isExpired()) {
+            return res.status(403).json({ 
+                error: 'Account has expired',
+                expired: true,
+                expiresAt: apiUser.expiresAt
+            });
+        }
+        
         if (apiUser.status !== 'active') {
             return res.status(403).json({ 
-                error: 'Account is suspended',
+                error: apiUser.status === 'suspended' ? 'Account is suspended' : 'Account is not active',
                 status: apiUser.status
             });
         }
@@ -53,6 +62,8 @@ router.post('/login', async (req, res) => {
                 status: apiUser.status,
                 limits: apiUser.limits,
                 totalAttacks: apiUser.totalAttacks,
+                expiresAt: apiUser.expiresAt,
+                daysRemaining: apiUser.getDaysRemaining(),
                 createdAt: apiUser.createdAt
             }
         });
@@ -62,7 +73,6 @@ router.post('/login', async (req, res) => {
         res.status(500).json({ error: 'Login failed' });
     }
 });
-
 // Get dashboard stats (with full API key)
 // routes/apiAuth.js - Add/modify this endpoint
 // routes/apiAuth.js - FIX the stats endpoint
@@ -74,7 +84,11 @@ router.get('/dashboard/stats', verifyApiUserToken, async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
         
-        // Clean expired attacks and get count
+        // Check expiration
+        const isExpired = apiUser.isExpired();
+        const daysRemaining = apiUser.getDaysRemaining();
+        
+        // Clean expired attacks
         const now = new Date();
         const beforeCount = apiUser.activeAttacks.length;
         apiUser.activeAttacks = apiUser.activeAttacks.filter(a => a.expiresAt > now);
@@ -82,8 +96,7 @@ router.get('/dashboard/stats', verifyApiUserToken, async (req, res) => {
             await apiUser.save();
         }
         
-        // FIX: Make sure these are NUMBERS, not objects
-        const activeCount = apiUser.activeAttacks.length;  // This should be a number
+        const activeCount = apiUser.activeAttacks.length;
         
         res.json({
             success: true,
@@ -91,18 +104,21 @@ router.get('/dashboard/stats', verifyApiUserToken, async (req, res) => {
                 id: apiUser._id,
                 username: apiUser.username,
                 email: apiUser.email,
-                status: apiUser.status,
+                status: isExpired ? 'expired' : apiUser.status,
                 limits: {
                     maxConcurrent: apiUser.limits.maxConcurrent,
                     maxDuration: apiUser.limits.maxDuration
                 },
-                createdAt: apiUser.createdAt
+                createdAt: apiUser.createdAt,
+                expiresAt: apiUser.expiresAt,
+                daysRemaining: daysRemaining,
+                isExpired: isExpired
             },
             stats: {
                 totalAttacks: apiUser.totalAttacks || 0,
                 totalRequests: apiUser.totalRequests || 0,
-                currentActiveAttacks: activeCount,  // FIX: Return number, not object
-                remainingSlots: Math.max(0, apiUser.limits.maxConcurrent - activeCount)  // FIX: Calculate properly
+                currentActiveAttacks: activeCount,
+                remainingSlots: Math.max(0, apiUser.limits.maxConcurrent - activeCount)
             },
             activeAttacks: apiUser.activeAttacks.map(a => ({
                 attackId: a.attackId,

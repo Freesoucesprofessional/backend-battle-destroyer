@@ -12,6 +12,14 @@ router.use(authenticateApiUser);
 router.post('/attack', async (req, res) => {
     const { ip, port, duration } = req.body;
     const apiUser = req.apiUser;
+
+    if (apiUser.isExpired()) {
+        return res.status(403).json({ 
+            error: 'Account has expired',
+            expiresAt: apiUser.expiresAt,
+            daysRemaining: 0
+        });
+    }
     
     // Validation
     if (!ip || !port || !duration) {

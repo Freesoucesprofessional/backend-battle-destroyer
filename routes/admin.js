@@ -89,6 +89,97 @@ async function adminAuth(req, res, next) {
 }
 
 
+router.post('/api-users/:id/extend', adminAuth, async (req, res) => {
+    try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({ message: 'Invalid user ID format' });
+        }
+
+        const { days } = req.body;
+        
+        if (!days || days < 1 || days > 365) {
+            return res.status(400).json({ message: 'Days must be between 1 and 365' });
+        }
+
+        const apiUser = await ApiUser.findById(req.params.id);
+        if (!apiUser) {
+            return res.status(404).json({ message: 'API user not found' });
+        }
+
+        const oldExpiry = apiUser.expiresAt;
+        const newExpiry = await apiUser.extendExpiration(days);
+
+        await createAuditLog({
+            actorType: 'api_user',
+            action: 'EXTEND_API_USER',
+            targetId: apiUser._id,
+            targetType: 'api_user',
+            changes: { days, oldExpiry, newExpiry },
+            ip: req.ip,
+            userAgent: req.headers['user-agent'],
+            success: true
+        });
+
+        res.json({
+            success: true,
+            message: `API user expiration extended by ${days} days`,
+            expiresAt: newExpiry,
+            daysRemaining: apiUser.getDaysRemaining()
+        });
+    } catch (err) {
+        console.error('❌ Extend API user error:', err);
+        res.status(500).json({ message: 'Failed to extend expiration' });
+    }
+});
+
+// SET API user expiration (replace)
+router.post('/api-users/:id/set-expiration', adminAuth, async (req, res) => {
+    try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({ message: 'Invalid user ID format' });
+        }
+
+        const { days } = req.body;
+        
+        if (!days || days < 1 || days > 365) {
+            return res.status(400).json({ message: 'Days must be between 1 and 365' });
+        }
+
+        const apiUser = await ApiUser.findById(req.params.id);
+        if (!apiUser) {
+            return res.status(404).json({ message: 'API user not found' });
+        }
+
+        const oldExpiry = apiUser.expiresAt;
+        apiUser.expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+        if (apiUser.status === 'expired') {
+            apiUser.status = 'active';
+        }
+        await apiUser.save();
+
+        await createAuditLog({
+            actorType: 'admin',
+            action: 'SET_API_USER_EXPIRATION',
+            targetId: apiUser._id,
+            targetType: 'api_user',
+            changes: { days, oldExpiry, newExpiry: apiUser.expiresAt },
+            ip: req.ip,
+            userAgent: req.headers['user-agent'],
+            success: true
+        });
+
+        res.json({
+            success: true,
+            message: `API user expiration set to ${days} days`,
+            expiresAt: apiUser.expiresAt,
+            daysRemaining: apiUser.getDaysRemaining()
+        });
+    } catch (err) {
+        console.error('❌ Set API user expiration error:', err);
+        res.status(500).json({ message: 'Failed to set expiration' });
+    }
+});
+
 // GET all API users
 router.get('/api-users', adminAuth, async (req, res) => {
     try {
@@ -121,14 +212,16 @@ router.get('/api-users', adminAuth, async (req, res) => {
             .limit(limit)
             .lean();
 
-        // Add real-time active attack counts
-        const usersWithActive = apiUsers.map(user => ({
+        // Add real-time info
+        const usersWithInfo = apiUsers.map(user => ({
             ...user,
-            currentActive: user.activeAttacks?.filter(a => new Date(a.expiresAt) > new Date()).length || 0
+            currentActive: user.activeAttacks?.filter(a => new Date(a.expiresAt) > new Date()).length || 0,
+            isExpired: user.expiresAt ? new Date(user.expiresAt) < new Date() : false,
+            daysRemaining: user.expiresAt ? Math.max(0, Math.ceil((new Date(user.expiresAt) - new Date()) / (1000 * 60 * 60 * 24))) : null
         }));
 
         res.json({
-            users: usersWithActive,
+            users: usersWithInfo,
             total,
             totalPages,
             currentPage: page
@@ -142,7 +235,7 @@ router.get('/api-users', adminAuth, async (req, res) => {
 // CREATE API user
 router.post('/api-users', adminAuth, async (req, res) => {
     try {
-        const { username, email, maxConcurrent, maxDuration } = req.body;
+        const { username, email, maxConcurrent, maxDuration, expirationDays = 30 } = req.body;
 
         // Validation
         if (!username || !username.match(/^[a-zA-Z0-9_]{3,30}$/)) {
@@ -162,6 +255,10 @@ router.post('/api-users', adminAuth, async (req, res) => {
         const apiKey = 'ak_' + crypto.randomBytes(24).toString('hex');
         const apiSecret = 'as_' + crypto.randomBytes(32).toString('hex');
 
+        // Calculate expiration date (default 30 days)
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + (expirationDays || 30));
+
         const apiUser = new ApiUser({
             username,
             email: email.toLowerCase(),
@@ -171,17 +268,18 @@ router.post('/api-users', adminAuth, async (req, res) => {
                 maxConcurrent: maxConcurrent || 2,
                 maxDuration: maxDuration || 300
             },
-            status: 'active'
+            status: 'active',
+            expiresAt: expiresAt
         });
 
         await apiUser.save();
 
         await createAuditLog({
-            actorType: 'admin',
+            actorType: 'api_user',
             action: 'CREATE_API_USER',
             targetId: apiUser._id,
             targetType: 'api_user',
-            changes: { username, email, maxConcurrent, maxDuration },
+            changes: { username, email, maxConcurrent, maxDuration, expirationDays },
             ip: req.ip,
             userAgent: req.headers['user-agent'],
             success: true
@@ -197,6 +295,8 @@ router.post('/api-users', adminAuth, async (req, res) => {
                 apiSecret: apiUser.apiSecret,
                 limits: apiUser.limits,
                 status: apiUser.status,
+                expiresAt: apiUser.expiresAt,
+                daysRemaining: apiUser.getDaysRemaining(),
                 createdAt: apiUser.createdAt
             }
         });
@@ -255,7 +355,7 @@ router.patch('/api-users/:id/limits', adminAuth, async (req, res) => {
         await apiUser.save();
 
         await createAuditLog({
-            actorType: 'admin',
+            actorType: 'api_user',
             action: 'UPDATE_API_USER',
             targetId: apiUser._id,
             targetType: 'api_user',
@@ -271,7 +371,9 @@ router.patch('/api-users/:id/limits', adminAuth, async (req, res) => {
                 id: apiUser._id,
                 username: apiUser.username,
                 limits: apiUser.limits,
-                status: apiUser.status
+                status: apiUser.status,
+                expiresAt: apiUser.expiresAt,
+                daysRemaining: apiUser.getDaysRemaining()
             }
         });
     } catch (err) {
@@ -297,7 +399,7 @@ router.post('/api-users/:id/regenerate-secret', adminAuth, async (req, res) => {
         await apiUser.save();
 
         await createAuditLog({
-            actorType: 'admin',
+            actorType: 'api_user',
             action: 'REGENERATE_API_SECRET',
             targetId: apiUser._id,
             targetType: 'api_user',
@@ -330,7 +432,7 @@ router.delete('/api-users/:id', adminAuth, async (req, res) => {
         }
 
         await createAuditLog({
-            actorType: 'admin',
+            actorType: 'api_user',
             action: 'DELETE_API_USER',
             targetId: req.params.id,
             targetType: 'api_user',

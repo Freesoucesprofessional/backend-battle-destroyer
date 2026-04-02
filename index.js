@@ -337,6 +337,14 @@ setInterval(async () => {
         console.error('Cleanup job error:', error);
     }
 }, 60000);
+
+setInterval(async () => {
+    try {
+        await ApiUser.cleanExpiredAttacks();
+    } catch (error) {
+        console.error('Cleanup job error:', error);
+    }
+}, 60000);
 // ===== MONGODB CONNECTION & SERVER START =====
 mongoose.connect(process.env.MONGO_URI, {
   serverSelectionTimeoutMS: 5000,
