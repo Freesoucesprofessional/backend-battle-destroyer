@@ -64,6 +64,7 @@ router.post('/login', async (req, res) => {
 });
 
 // Get dashboard stats (with full API key)
+// routes/apiAuth.js - Add/modify this endpoint
 router.get('/dashboard/stats', verifyApiUserToken, async (req, res) => {
     try {
         const apiUser = await ApiUser.findById(req.apiUserId);
@@ -72,7 +73,15 @@ router.get('/dashboard/stats', verifyApiUserToken, async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
         
-        const activeCount = apiUser.getActiveCount();
+        // Clean expired attacks and get count
+        const now = new Date();
+        const beforeCount = apiUser.activeAttacks.length;
+        apiUser.activeAttacks = apiUser.activeAttacks.filter(a => a.expiresAt > now);
+        if (beforeCount !== apiUser.activeAttacks.length) {
+            await apiUser.save();
+        }
+        
+        const activeCount = apiUser.activeAttacks.length;
         
         res.json({
             success: true,
@@ -85,20 +94,18 @@ router.get('/dashboard/stats', verifyApiUserToken, async (req, res) => {
                 createdAt: apiUser.createdAt
             },
             stats: {
-                totalAttacks: apiUser.totalAttacks,
-                totalRequests: apiUser.totalRequests,
+                totalAttacks: apiUser.totalAttacks || 0,
+                totalRequests: apiUser.totalRequests || 0,
                 currentActiveAttacks: activeCount,
                 remainingSlots: apiUser.limits.maxConcurrent - activeCount
             },
-            apiKey: apiUser.apiKey,
-            activeAttacks: apiUser.activeAttacks
-                .filter(a => new Date(a.expiresAt) > new Date())
-                .map(a => ({
-                    attackId: a.attackId,
-                    target: a.target,
-                    port: a.port,
-                    expiresIn: Math.floor((new Date(a.expiresAt) - Date.now()) / 1000)
-                }))
+            activeAttacks: apiUser.activeAttacks.map(a => ({
+                attackId: a.attackId,
+                target: a.target,
+                port: a.port,
+                expiresIn: Math.max(0, Math.floor((a.expiresAt - now) / 1000))
+            })),
+            apiKey: apiUser.apiKey
         });
         
     } catch (error) {
