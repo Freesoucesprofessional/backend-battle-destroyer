@@ -1215,7 +1215,7 @@ router.post('/users/:id/give-pro', adminAuth, async (req, res) => {
       days = parseInt(customDays);
       plan = 'custom';
     } else {
-      const planDays = { week: 7, month: 30, season: 90 };
+      const planDays = { week: 7, month: 30, season: 60 };  // Changed from 90 to 60
       days = planDays[planType];
       if (!days) {
         return res.status(400).json({ message: 'Invalid plan type', validPlans: ['week', 'month', 'season', 'custom'] });
