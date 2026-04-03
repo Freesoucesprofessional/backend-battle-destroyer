@@ -1204,7 +1204,45 @@ router.post('/users/:id/give-pro', adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'Invalid user ID format' });
     }
 
-    const { planType, customDays } = req.body;
+    // 🔐 DECRYPT THE REQUEST BODY FIRST
+    let requestData = req.body;
+    
+    // Check if the request is encrypted
+    if (req.body.encrypted && req.body.hash) {
+      try {
+        // Decrypt the data
+        const decryptedBytes = CryptoJS.AES.decrypt(req.body.encrypted, ENCRYPTION_KEY);
+        const decryptedString = decryptedBytes.toString(CryptoJS.enc.Utf8);
+        
+        if (!decryptedString) {
+          throw new Error('Decryption failed');
+        }
+        
+        requestData = JSON.parse(decryptedString);
+        
+        // Verify hash
+        const calculatedHash = createHash(requestData);
+        if (calculatedHash !== req.body.hash) {
+          return res.status(400).json({ message: 'Request integrity check failed' });
+        }
+        
+        // Remove timestamp if present
+        if (requestData.timestamp) {
+          delete requestData.timestamp;
+        }
+      } catch (decryptError) {
+        console.error('Decryption error:', decryptError);
+        return res.status(400).json({ message: 'Invalid encrypted data' });
+      }
+    }
+
+    // Now use requestData instead of req.body
+    const { planType, customDays } = requestData;
+    
+    // Debug logging
+    console.log('📥 Received planType:', planType);
+    console.log('📥 Received customDays:', customDays);
+    
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
@@ -1215,10 +1253,14 @@ router.post('/users/:id/give-pro', adminAuth, async (req, res) => {
       days = parseInt(customDays);
       plan = 'custom';
     } else {
-      const planDays = { week: 7, month: 30, season: 60 };  // Changed from 90 to 60
+      const planDays = { week: 7, month: 30, season: 60 };
       days = planDays[planType];
       if (!days) {
-        return res.status(400).json({ message: 'Invalid plan type', validPlans: ['week', 'month', 'season', 'custom'] });
+        return res.status(400).json({ 
+          message: 'Invalid plan type', 
+          validPlans: ['week', 'month', 'season', 'custom'],
+          received: planType 
+        });
       }
     }
 
@@ -1249,7 +1291,20 @@ router.post('/users/:id/give-pro', adminAuth, async (req, res) => {
 
     res.json({
       message: `Pro subscription added successfully for ${days} days`,
-      user: { id: user._id, username: user.username, email: user.email, isPro: user.isProUser(), subscription: { type: user.subscription.type, plan: user.subscription.plan, expiresAt: user.subscription.expiresAt, dailyCredits: user.subscription.dailyCredits }, expiresAt: user.subscription.expiresAt, daysLeft: user.getSubscriptionStatus().daysLeft }
+      user: { 
+        id: user._id, 
+        username: user.username, 
+        email: user.email, 
+        isPro: user.isProUser(), 
+        subscription: { 
+          type: user.subscription.type, 
+          plan: user.subscription.plan, 
+          expiresAt: user.subscription.expiresAt, 
+          dailyCredits: user.subscription.dailyCredits 
+        }, 
+        expiresAt: user.subscription.expiresAt, 
+        daysLeft: user.getSubscriptionStatus().daysLeft 
+      }
     });
   } catch (err) {
     console.error('❌ Give pro error:', err);
@@ -1303,28 +1358,70 @@ router.post('/users/:id/extend-pro', adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'Invalid user ID format' });
     }
 
-    const { planType, customDays } = req.body;
+    // 🔐 DECRYPT THE REQUEST BODY FIRST
+    let requestData = req.body;
+    
+    if (req.body.encrypted && req.body.hash) {
+      try {
+        const decryptedBytes = CryptoJS.AES.decrypt(req.body.encrypted, ENCRYPTION_KEY);
+        const decryptedString = decryptedBytes.toString(CryptoJS.enc.Utf8);
+        
+        if (!decryptedString) {
+          throw new Error('Decryption failed');
+        }
+        
+        requestData = JSON.parse(decryptedString);
+        
+        const calculatedHash = createHash(requestData);
+        if (calculatedHash !== req.body.hash) {
+          return res.status(400).json({ message: 'Request integrity check failed' });
+        }
+        
+        if (requestData.timestamp) {
+          delete requestData.timestamp;
+        }
+      } catch (decryptError) {
+        console.error('Decryption error:', decryptError);
+        return res.status(400).json({ message: 'Invalid encrypted data' });
+      }
+    }
+
+    const { planType, customDays } = requestData;
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
-    if (!user.isProUser()) return res.status(400).json({ message: 'User does not have an active Pro subscription' });
 
     let days = 0;
+    let plan = planType;
+
     if (planType === 'custom' && customDays) {
       days = parseInt(customDays);
+      plan = 'custom';
     } else {
-      const planDays = { week: 7, month: 30, season: 90 };
+      // ✅ FIXED: Changed season from 90 to 60
+      const planDays = { week: 7, month: 30, season: 60 };
       days = planDays[planType];
-      if (!days) return res.status(400).json({ message: 'Invalid plan type' });
+      if (!days) {
+        return res.status(400).json({ 
+          message: 'Invalid plan type', 
+          validPlans: ['week', 'month', 'season', 'custom'],
+          received: planType 
+        });
+      }
     }
 
     if (isNaN(days) || days < 1 || days > 365) {
-      return res.status(400).json({ message: 'Days must be between 1 and 365' });
+      return res.status(400).json({ message: 'Days must be between 1 and 365', provided: days });
     }
 
-    const oldExpiry = user.subscription.expiresAt;
-    const newExpiry = new Date(user.subscription.expiresAt);
-    newExpiry.setDate(newExpiry.getDate() + days);
-    user.subscription.expiresAt = newExpiry;
+    // Extend existing subscription
+    if (user.subscription.expiresAt && user.subscription.expiresAt > new Date()) {
+      user.subscription.expiresAt = new Date(user.subscription.expiresAt.getTime() + days * 24 * 60 * 60 * 1000);
+    } else {
+      user.subscription.expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    }
+    
+    user.subscription.type = 'pro';
+    user.subscription.plan = plan;
     await user.save();
 
     await createAuditLog({
@@ -1332,13 +1429,21 @@ router.post('/users/:id/extend-pro', adminAuth, async (req, res) => {
       action: 'EXTEND_PRO_SUBSCRIPTION',
       targetId: user._id,
       targetType: 'user',
-      changes: { days, oldExpiry, newExpiry: user.subscription.expiresAt },
+      changes: { extendedBy: days, newExpiry: user.subscription.expiresAt, plan },
       ip: req.ip,
       userAgent: req.headers['user-agent'],
       success: true
     });
 
-    res.json({ message: `Pro subscription extended by ${days} days`, user: { id: user._id, username: user.username, email: user.email, isPro: user.isProUser(), subscription: user.subscription, expiresAt: user.subscription.expiresAt, daysLeft: user.getSubscriptionStatus().daysLeft } });
+    res.json({ 
+      message: `Pro subscription extended by ${days} days`, 
+      user: { 
+        id: user._id, 
+        username: user.username, 
+        expiresAt: user.subscription.expiresAt, 
+        daysLeft: user.getSubscriptionStatus().daysLeft 
+      } 
+    });
   } catch (err) {
     console.error('❌ Extend pro error:', err);
     res.status(500).json({ message: 'Failed to extend pro subscription', error: err.message });
@@ -1351,7 +1456,44 @@ router.post('/users/:id/replace-pro', adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'Invalid user ID format' });
     }
 
-    const { planType, customDays } = req.body;
+    // 🔐 DECRYPT THE REQUEST BODY FIRST
+    let requestData = req.body;
+    
+    // Check if the request is encrypted
+    if (req.body.encrypted && req.body.hash) {
+      try {
+        const decryptedBytes = CryptoJS.AES.decrypt(req.body.encrypted, ENCRYPTION_KEY);
+        const decryptedString = decryptedBytes.toString(CryptoJS.enc.Utf8);
+        
+        if (!decryptedString) {
+          throw new Error('Decryption failed');
+        }
+        
+        requestData = JSON.parse(decryptedString);
+        
+        // Verify hash
+        const calculatedHash = createHash(requestData);
+        if (calculatedHash !== req.body.hash) {
+          return res.status(400).json({ message: 'Request integrity check failed' });
+        }
+        
+        // Remove timestamp if present
+        if (requestData.timestamp) {
+          delete requestData.timestamp;
+        }
+      } catch (decryptError) {
+        console.error('Decryption error:', decryptError);
+        return res.status(400).json({ message: 'Invalid encrypted data' });
+      }
+    }
+
+    // Now use requestData instead of req.body
+    const { planType, customDays } = requestData;
+    
+    // Debug logging
+    console.log('📥 Replace Pro - Received planType:', planType);
+    console.log('📥 Replace Pro - Received customDays:', customDays);
+    
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
@@ -1362,23 +1504,38 @@ router.post('/users/:id/replace-pro', adminAuth, async (req, res) => {
       days = parseInt(customDays);
       plan = 'custom';
     } else {
-      const planDays = { week: 7, month: 30, season: 90 };
+      // ✅ FIXED: Changed season from 90 to 60 to match frontend
+      const planDays = { week: 7, month: 30, season: 60 };
       days = planDays[planType];
-      if (!days) return res.status(400).json({ message: 'Invalid plan type. Use: week, month, season, or custom', validPlans: ['week', 'month', 'season', 'custom'] });
+      if (!days) {
+        return res.status(400).json({ 
+          message: 'Invalid plan type', 
+          validPlans: ['week', 'month', 'season', 'custom'],
+          received: planType 
+        });
+      }
     }
 
     if (isNaN(days) || days < 1 || days > 365) {
       return res.status(400).json({ message: 'Days must be between 1 and 365', provided: days });
     }
 
-    const oldSubscription = user.subscription ? { type: user.subscription.type, plan: user.subscription.plan, expiresAt: user.subscription.expiresAt, dailyCredits: user.subscription.dailyCredits } : null;
+    const oldSubscription = user.subscription ? { 
+      type: user.subscription.type, 
+      plan: user.subscription.plan, 
+      expiresAt: user.subscription.expiresAt, 
+      dailyCredits: user.subscription.dailyCredits 
+    } : null;
     const oldExpiry = user.subscription?.expiresAt;
 
+    // Remove old subscription first
     user.subscription.type = 'free';
     user.subscription.plan = 'none';
     user.subscription.expiresAt = null;
     user.subscription.dailyCredits = 10;
     user.subscription.lastCreditReset = new Date();
+    
+    // Add new pro subscription
     user.addProSubscription(plan, days);
     await user.save();
 
@@ -1387,13 +1544,41 @@ router.post('/users/:id/replace-pro', adminAuth, async (req, res) => {
       action: 'REPLACE_PRO_SUBSCRIPTION',
       targetId: user._id,
       targetType: 'user',
-      changes: { oldSubscription, newSubscription: { type: user.subscription.type, plan: user.subscription.plan, expiresAt: user.subscription.expiresAt, dailyCredits: user.subscription.dailyCredits }, days, plan, oldExpiry, newExpiry: user.subscription.expiresAt },
+      changes: { 
+        oldSubscription, 
+        newSubscription: { 
+          type: user.subscription.type, 
+          plan: user.subscription.plan, 
+          expiresAt: user.subscription.expiresAt, 
+          dailyCredits: user.subscription.dailyCredits 
+        }, 
+        days, 
+        plan, 
+        oldExpiry, 
+        newExpiry: user.subscription.expiresAt 
+      },
       ip: req.ip,
       userAgent: req.headers['user-agent'],
       success: true
     });
 
-    res.json({ message: `Pro subscription replaced with ${days} days plan`, user: { id: user._id, username: user.username, email: user.email, isPro: user.isProUser(), subscription: { type: user.subscription.type, plan: user.subscription.plan, expiresAt: user.subscription.expiresAt, dailyCredits: user.subscription.dailyCredits }, expiresAt: user.subscription.expiresAt, daysLeft: user.getSubscriptionStatus().daysLeft } });
+    res.json({ 
+      message: `Pro subscription replaced with ${days} days plan`, 
+      user: { 
+        id: user._id, 
+        username: user.username, 
+        email: user.email, 
+        isPro: user.isProUser(), 
+        subscription: { 
+          type: user.subscription.type, 
+          plan: user.subscription.plan, 
+          expiresAt: user.subscription.expiresAt, 
+          dailyCredits: user.subscription.dailyCredits 
+        }, 
+        expiresAt: user.subscription.expiresAt, 
+        daysLeft: user.getSubscriptionStatus().daysLeft 
+      } 
+    });
   } catch (err) {
     console.error('❌ Replace pro error:', err);
     res.status(500).json({ message: 'Failed to replace pro subscription', error: err.message });
