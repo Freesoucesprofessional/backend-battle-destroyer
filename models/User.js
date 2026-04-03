@@ -9,7 +9,7 @@ const UserSchema = new mongoose.Schema({
   password: { type: String, required: true },
   
   // NEW: Subscription system instead of simple credits
-  credits: { type: Number, default: 10 }, // Free users: 10 free credits on signup
+  credits: { type: Number, default: 1 }, // Free users: 10 free credits on signup
   
   // Subscription details
   subscription: {
@@ -29,7 +29,7 @@ const UserSchema = new mongoose.Schema({
     },
     dailyCredits: {
       type: Number,
-      default: 10 // Free users get 10 daily credits (but they use credits balance)
+      default: 1 // Free users get 10 daily credits (but they use credits balance)
     },
     lastCreditReset: {
       type: Date,
@@ -89,7 +89,7 @@ UserSchema.methods.checkAndResetDailyCredits = async function() {
       this.subscription.dailyCredits = 30;
     } else {
       // Free users get daily limit of 10 attacks (but they still use credits)
-      this.subscription.dailyCredits = 10;
+      this.subscription.dailyCredits = 1;
     }
     this.subscription.lastCreditReset = new Date();
     

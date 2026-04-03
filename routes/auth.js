@@ -160,7 +160,7 @@ router.post('/signup', async (req, res) => {
     }
 
     const isNewUniqueUser = !abuseCheck;
-    const startingCredits = isNewUniqueUser ? 10 : 0;
+    const startingCredits = isNewUniqueUser ? 1 : 0;
 
     console.log(`[Signup] ${username} | IP: ${ip} | credits: ${startingCredits}`);
 
@@ -177,7 +177,7 @@ router.post('/signup', async (req, res) => {
       subscription: {
         type: 'free',
         plan: 'none',
-        dailyCredits: 10,
+        dailyCredits: 1,
         lastCreditReset: new Date(),
       },
     });
