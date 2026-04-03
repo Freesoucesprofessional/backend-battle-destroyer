@@ -1,84 +1,84 @@
 // models/ApiUser.js - Complete working model with duplicate prevention
 const mongoose = require('mongoose');
-const crypto   = require('crypto');
+const crypto = require('crypto');
 
 const apiUserSchema = new mongoose.Schema({
-    username: { 
-        type: String, 
-        required: true, 
+    username: {
+        type: String,
+        required: true,
         unique: true,
         trim: true,
         lowercase: true,
         validate: {
-            validator: function(v) {
+            validator: function (v) {
                 return /^[a-zA-Z0-9_.-]{3,30}$/.test(v);
             },
             message: 'Username must be 3-30 characters and can only contain letters, numbers, underscores, dots, and hyphens'
         }
     },
-    email: { 
-        type: String, 
+    email: {
+        type: String,
         required: true,
         unique: true,
         lowercase: true,
         trim: true,
         validate: {
-            validator: function(v) {
+            validator: function (v) {
                 return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
             },
             message: 'Invalid email format'
         }
     },
-    apiKey: { 
-        type: String, 
-        required: true, 
+    apiKey: {
+        type: String,
+        required: true,
         unique: true,
-        index: true 
+        index: true
     },
-    apiSecretHash: { 
-        type: String, 
-        required: true, 
+    apiSecretHash: {
+        type: String,
+        required: true,
         unique: true,
-        index: true 
+        index: true
     },
-    status: { 
-        type: String, 
-        enum: ['active', 'suspended', 'expired'], 
-        default: 'active' 
+    status: {
+        type: String,
+        enum: ['active', 'suspended', 'expired'],
+        default: 'active'
     },
-    expiresAt: { 
-        type: Date, 
-        default: null 
+    expiresAt: {
+        type: Date,
+        default: null
     },
-    createdAt: { 
-        type: Date, 
-        default: Date.now 
+    createdAt: {
+        type: Date,
+        default: Date.now
     },
     limits: {
-        maxConcurrent: { 
-            type: Number, 
+        maxConcurrent: {
+            type: Number,
             default: 2,
             min: 1,
             max: 100
         },
-        maxDuration: { 
-            type: Number, 
+        maxDuration: {
+            type: Number,
             default: 300,
             min: 30,
             max: 3600
         }
     },
     activeAttacks: [{
-        attackId:  { type: String, required: true },
-        target:    String,
-        port:      Number,
+        attackId: { type: String, required: true },
+        target: String,
+        port: Number,
         startedAt: { type: Date, default: Date.now },
         expiresAt: Date
     }],
-    totalAttacks:  { type: Number, default: 0 },
+    totalAttacks: { type: Number, default: 0 },
     totalRequests: { type: Number, default: 0 },
-    createdBy:     { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    lastLoginAt:   { type: Date }
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    lastLoginAt: { type: Date }
 });
 
 // ── Static generators with collision prevention ──────────────────────────────
@@ -86,19 +86,19 @@ const apiUserSchema = new mongoose.Schema({
 apiUserSchema.statics.generateUniqueApiKey = async function (retryCount = 0) {
     const maxRetries = 5;
     const apiKey = 'ak_' + crypto.randomBytes(24).toString('hex');
-    
+
     // Check if this key already exists
     const existing = await this.findOne({ apiKey });
-    
+
     if (existing && retryCount < maxRetries) {
         console.log(`API key collision detected, retrying... (${retryCount + 1}/${maxRetries})`);
         return this.generateUniqueApiKey(retryCount + 1);
     }
-    
+
     if (existing) {
         throw new Error('Failed to generate unique API key after multiple attempts');
     }
-    
+
     return apiKey;
 };
 
@@ -106,19 +106,19 @@ apiUserSchema.statics.generateUniqueApiSecret = async function (retryCount = 0) 
     const maxRetries = 5;
     const raw = 'as_' + crypto.randomBytes(32).toString('hex');
     const hashed = crypto.createHash('sha256').update(raw).digest('hex');
-    
+
     // Check if this hash already exists
     const existing = await this.findOne({ apiSecretHash: hashed });
-    
+
     if (existing && retryCount < maxRetries) {
         console.log(`Secret hash collision detected, retrying... (${retryCount + 1}/${maxRetries})`);
         return this.generateUniqueApiSecret(retryCount + 1);
     }
-    
+
     if (existing) {
         throw new Error('Failed to generate unique API secret after multiple attempts');
     }
-    
+
     return { raw, hashed };
 };
 
@@ -147,12 +147,16 @@ apiUserSchema.methods.getDaysRemaining = function () {
 };
 
 apiUserSchema.methods.extendExpiration = async function (days) {
-    if (!this.expiresAt) {
-        this.expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    const newExpiry = new Date();
+    newExpiry.setDate(newExpiry.getDate() + days);
+
+    // If current expiry is in the future, add to it instead of resetting
+    if (this.expiresAt && this.expiresAt > new Date()) {
+        this.expiresAt.setDate(this.expiresAt.getDate() + days);
     } else {
-        this.expiresAt = new Date(new Date(this.expiresAt).getTime() + days * 24 * 60 * 60 * 1000);
+        this.expiresAt = newExpiry;
     }
-    if (this.status === 'expired') this.status = 'active';
+
     await this.save();
     return this.expiresAt;
 };
@@ -182,7 +186,7 @@ apiUserSchema.statics.cleanExpiredAttacks = async function () {
 };
 
 apiUserSchema.methods.getActiveCount = async function () {
-    const now         = new Date();
+    const now = new Date();
     const beforeCount = this.activeAttacks.length;
     this.activeAttacks = this.activeAttacks.filter(a => a.expiresAt > now);
     if (beforeCount !== this.activeAttacks.length) await this.save();
@@ -208,31 +212,31 @@ apiUserSchema.methods.removeActiveAttack = async function (attackId) {
 };
 
 apiUserSchema.methods.cleanExpired = async function () {
-    const now         = new Date();
+    const now = new Date();
     const beforeCount = this.activeAttacks.length;
     this.activeAttacks = this.activeAttacks.filter(a => a.expiresAt > now);
     if (beforeCount !== this.activeAttacks.length) await this.save();
     return this.activeAttacks.length;
 };
 // In models/ApiUser.js - add this method if missing
-apiUserSchema.methods.getRemainingAttacks = async function() {
+apiUserSchema.methods.getRemainingAttacks = async function () {
     // Reset daily credits if needed
     const now = new Date();
     const lastReset = this.subscription?.lastCreditReset || this.createdAt;
     const daysSinceReset = Math.floor((now - lastReset) / (1000 * 60 * 60 * 24));
-    
+
     if (daysSinceReset > 0) {
         this.subscription.lastCreditReset = now;
         this.subscription.creditsUsedToday = 0;
         await this.save();
     }
-    
+
     const dailyLimit = this.isProUser() ? 30 : 10;
     const used = this.subscription?.creditsUsedToday || 0;
     return Math.max(0, dailyLimit - used);
 };
 
-apiUserSchema.methods.isProUser = function() {
+apiUserSchema.methods.isProUser = function () {
     return this.subscription?.type === 'pro' && this.subscription?.expiresAt > new Date();
 };
 // Ensure indexes are created

@@ -128,10 +128,34 @@ router.post('/api-users/:id/extend', adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'Invalid user ID format' });
     }
 
-    const { days } = req.body;
+    // Handle encrypted request
+    let requestData = req.body;
+    if (req.body.encrypted && req.body.hash) {
+      try {
+        const decrypted = decryptData(req.body.encrypted);
+        const calculatedHash = createHash(decrypted);
+        if (calculatedHash !== req.body.hash) {
+          return res.status(400).json({ message: 'Request integrity check failed' });
+        }
+        requestData = decrypted;
+      } catch (err) {
+        console.error('Decryption error:', err);
+        return res.status(400).json({ message: 'Invalid encrypted data' });
+      }
+    }
 
-    if (!days || days < 1 || days > 365) {
-      return res.status(400).json({ message: 'Days must be between 1 and 365' });
+    const { days } = requestData;
+
+    // Better validation with more detailed error
+    if (days === undefined || days === null) {
+      return res.status(400).json({ message: 'Days parameter is required' });
+    }
+    
+    const daysNum = parseInt(days);
+    if (isNaN(daysNum) || daysNum < 1 || daysNum > 365) {
+      return res.status(400).json({ 
+        message: `Days must be between 1 and 365. Received: ${days}` 
+      });
     }
 
     const apiUser = await ApiUser.findById(req.params.id);
@@ -140,32 +164,37 @@ router.post('/api-users/:id/extend', adminAuth, async (req, res) => {
     }
 
     const oldExpiry = apiUser.expiresAt;
-    const newExpiry = await apiUser.extendExpiration(days);
+    const newExpiry = await apiUser.extendExpiration(daysNum);
 
+    // Send encrypted response
+    const responseData = {
+      success: true,
+      message: `API user expiration extended by ${daysNum} days`,
+      expiresAt: newExpiry,
+      daysRemaining: apiUser.getDaysRemaining()
+    };
+    
+    const encrypted = encryptData(responseData);
+    const hash = createHash(responseData);
+    
     await createAuditLog({
-      actorType: 'admin',  // FIXED: Changed from 'api_user' to 'admin'
+      actorType: 'admin',
       actorId: req.userId,
       action: 'EXTEND_API_USER',
       targetId: apiUser._id,
       targetType: 'api_user',
-      changes: { days, oldExpiry, newExpiry },
+      changes: { days: daysNum, oldExpiry, newExpiry },
       ip: req.ip,
       userAgent: req.headers['user-agent'],
       success: true
     });
 
-    res.json({
-      success: true,
-      message: `API user expiration extended by ${days} days`,
-      expiresAt: newExpiry,
-      daysRemaining: apiUser.getDaysRemaining()
-    });
+    res.json({ encrypted, hash });
   } catch (err) {
     console.error('❌ Extend API user error:', err);
     res.status(500).json({ message: 'Failed to extend expiration: ' + err.message });
   }
 });
-
 
 // SET API user expiration (replace)
 router.post('/api-users/:id/set-expiration', adminAuth, async (req, res) => {
@@ -483,7 +512,23 @@ router.patch('/api-users/:id/limits', adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'Invalid user ID format' });
     }
 
-    const { maxConcurrent, maxDuration, status } = req.body;
+    // Handle encrypted request
+    let requestData = req.body;
+    if (req.body.encrypted && req.body.hash) {
+      try {
+        const decrypted = decryptData(req.body.encrypted);
+        const calculatedHash = createHash(decrypted);
+        if (calculatedHash !== req.body.hash) {
+          return res.status(400).json({ message: 'Request integrity check failed' });
+        }
+        requestData = decrypted;
+      } catch (err) {
+        console.error('Decryption error:', err);
+        return res.status(400).json({ message: 'Invalid encrypted data' });
+      }
+    }
+
+    const { maxConcurrent, maxDuration, status, resetCurrentActive } = requestData;
     const apiUser = await ApiUser.findById(req.params.id);
 
     if (!apiUser) {
@@ -496,11 +541,33 @@ router.patch('/api-users/:id/limits', adminAuth, async (req, res) => {
     if (maxConcurrent !== undefined) apiUser.limits.maxConcurrent = maxConcurrent;
     if (maxDuration !== undefined) apiUser.limits.maxDuration = maxDuration;
     if (status !== undefined) apiUser.status = status;
+    
+    // Optionally reset current active count
+    if (resetCurrentActive === true) {
+      apiUser.currentActive = 0;
+    }
 
     await apiUser.save();
 
+    const responseData = {
+      success: true,
+      message: 'API user updated',
+      user: {
+        id: apiUser._id,
+        username: apiUser.username,
+        limits: apiUser.limits,
+        status: apiUser.status,
+        expiresAt: apiUser.expiresAt,
+        daysRemaining: apiUser.getDaysRemaining(),
+        currentActive: apiUser.currentActive
+      }
+    };
+    
+    const encrypted = encryptData(responseData);
+    const hash = createHash(responseData);
+
     await createAuditLog({
-      actorType: 'admin',  // FIXED: Changed from 'api_user' to 'admin'
+      actorType: 'admin',
       actorId: req.userId,
       action: 'UPDATE_API_USER',
       targetId: apiUser._id,
@@ -511,18 +578,7 @@ router.patch('/api-users/:id/limits', adminAuth, async (req, res) => {
       success: true
     });
 
-    res.json({
-      success: true,
-      message: 'API user updated',
-      user: {
-        id: apiUser._id,
-        username: apiUser.username,
-        limits: apiUser.limits,
-        status: apiUser.status,
-        expiresAt: apiUser.expiresAt,
-        daysRemaining: apiUser.getDaysRemaining()
-      }
-    });
+    res.json({ encrypted, hash });
   } catch (err) {
     console.error('❌ Update API user error:', err);
     res.status(500).json({ message: 'Failed to update API user: ' + err.message });
