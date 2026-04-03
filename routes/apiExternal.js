@@ -5,7 +5,7 @@ const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const { authenticateApiUser } = require('../middleware/apiAuthMiddleware');
 const ApiUser = require('../models/ApiUser');
-
+const serveron = false
 // Apply authentication middleware
 router.use(authenticateApiUser);
 
@@ -16,6 +16,12 @@ router.post('/attack', async (req, res) => {
         const apiUser = req.apiUser;
 
         console.log(`[API Attack] User: ${apiUser.username}, Target: ${ip}:${port}, Duration: ${duration}s`);
+
+        if(!serveron){
+            return res.status(403).json({ 
+                error: 'server under maintainence',
+            });
+        }
 
         // Check expiration
         if (apiUser.isExpired()) {
