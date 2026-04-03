@@ -1,27 +1,73 @@
-// models/ApiUser.js - with hashed apiSecret storage
+// models/ApiUser.js - Complete working model with duplicate prevention
 const mongoose = require('mongoose');
 const crypto   = require('crypto');
 
 const apiUserSchema = new mongoose.Schema({
-    username:     { type: String, required: true, unique: true },
-    email:        { type: String, required: true },
-    apiKey:       { type: String, required: true, unique: true },
-
-    // apiSecret is NEVER stored in plain text.
-    // We store SHA-256(rawSecret) and use it as the HMAC key for request signing.
-    // The rawSecret is shown to the admin ONCE at creation time and is unrecoverable.
-    apiSecretHash: { type: String, required: true },
-
-    status: { type: String, enum: ['active', 'suspended', 'expired'], default: 'active' },
-
-    expiresAt: { type: Date, default: null },
-    createdAt:  { type: Date, default: Date.now },
-
-    limits: {
-        maxConcurrent: { type: Number, default: 2 },
-        maxDuration:   { type: Number, default: 300 }
+    username: { 
+        type: String, 
+        required: true, 
+        unique: true,
+        trim: true,
+        lowercase: true,
+        validate: {
+            validator: function(v) {
+                return /^[a-zA-Z0-9_.-]{3,30}$/.test(v);
+            },
+            message: 'Username must be 3-30 characters and can only contain letters, numbers, underscores, dots, and hyphens'
+        }
     },
-
+    email: { 
+        type: String, 
+        required: true,
+        unique: true,
+        lowercase: true,
+        trim: true,
+        validate: {
+            validator: function(v) {
+                return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+            },
+            message: 'Invalid email format'
+        }
+    },
+    apiKey: { 
+        type: String, 
+        required: true, 
+        unique: true,
+        index: true 
+    },
+    apiSecretHash: { 
+        type: String, 
+        required: true, 
+        unique: true,
+        index: true 
+    },
+    status: { 
+        type: String, 
+        enum: ['active', 'suspended', 'expired'], 
+        default: 'active' 
+    },
+    expiresAt: { 
+        type: Date, 
+        default: null 
+    },
+    createdAt: { 
+        type: Date, 
+        default: Date.now 
+    },
+    limits: {
+        maxConcurrent: { 
+            type: Number, 
+            default: 2,
+            min: 1,
+            max: 100
+        },
+        maxDuration: { 
+            type: Number, 
+            default: 300,
+            min: 30,
+            max: 3600
+        }
+    },
     activeAttacks: [{
         attackId:  { type: String, required: true },
         target:    String,
@@ -29,29 +75,60 @@ const apiUserSchema = new mongoose.Schema({
         startedAt: { type: Date, default: Date.now },
         expiresAt: Date
     }],
-
     totalAttacks:  { type: Number, default: 0 },
     totalRequests: { type: Number, default: 0 },
     createdBy:     { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     lastLoginAt:   { type: Date }
 });
 
-// ── Static generators ─────────────────────────────────────────────────────────
+// ── Static generators with collision prevention ──────────────────────────────
 
+apiUserSchema.statics.generateUniqueApiKey = async function (retryCount = 0) {
+    const maxRetries = 5;
+    const apiKey = 'ak_' + crypto.randomBytes(24).toString('hex');
+    
+    // Check if this key already exists
+    const existing = await this.findOne({ apiKey });
+    
+    if (existing && retryCount < maxRetries) {
+        console.log(`API key collision detected, retrying... (${retryCount + 1}/${maxRetries})`);
+        return this.generateUniqueApiKey(retryCount + 1);
+    }
+    
+    if (existing) {
+        throw new Error('Failed to generate unique API key after multiple attempts');
+    }
+    
+    return apiKey;
+};
+
+apiUserSchema.statics.generateUniqueApiSecret = async function (retryCount = 0) {
+    const maxRetries = 5;
+    const raw = 'as_' + crypto.randomBytes(32).toString('hex');
+    const hashed = crypto.createHash('sha256').update(raw).digest('hex');
+    
+    // Check if this hash already exists
+    const existing = await this.findOne({ apiSecretHash: hashed });
+    
+    if (existing && retryCount < maxRetries) {
+        console.log(`Secret hash collision detected, retrying... (${retryCount + 1}/${maxRetries})`);
+        return this.generateUniqueApiSecret(retryCount + 1);
+    }
+    
+    if (existing) {
+        throw new Error('Failed to generate unique API secret after multiple attempts');
+    }
+    
+    return { raw, hashed };
+};
+
+// Legacy methods (for backward compatibility)
 apiUserSchema.statics.generateApiKey = function () {
     return 'ak_' + crypto.randomBytes(24).toString('hex');
 };
 
-/**
- * Generates a raw apiSecret and returns BOTH the raw value and its SHA-256 hash.
- *
- * Usage:
- *   const { raw, hashed } = ApiUser.generateApiSecret();
- *   // Store `hashed` in DB as apiSecretHash
- *   // Return `raw` to the admin/user — it will NEVER be recoverable after this
- */
 apiUserSchema.statics.generateApiSecret = function () {
-    const raw    = 'as_' + crypto.randomBytes(32).toString('hex');
+    const raw = 'as_' + crypto.randomBytes(32).toString('hex');
     const hashed = crypto.createHash('sha256').update(raw).digest('hex');
     return { raw, hashed };
 };
@@ -137,5 +214,40 @@ apiUserSchema.methods.cleanExpired = async function () {
     if (beforeCount !== this.activeAttacks.length) await this.save();
     return this.activeAttacks.length;
 };
+// In models/ApiUser.js - add this method if missing
+apiUserSchema.methods.getRemainingAttacks = async function() {
+    // Reset daily credits if needed
+    const now = new Date();
+    const lastReset = this.subscription?.lastCreditReset || this.createdAt;
+    const daysSinceReset = Math.floor((now - lastReset) / (1000 * 60 * 60 * 24));
+    
+    if (daysSinceReset > 0) {
+        this.subscription.lastCreditReset = now;
+        this.subscription.creditsUsedToday = 0;
+        await this.save();
+    }
+    
+    const dailyLimit = this.isProUser() ? 30 : 10;
+    const used = this.subscription?.creditsUsedToday || 0;
+    return Math.max(0, dailyLimit - used);
+};
+
+apiUserSchema.methods.isProUser = function() {
+    return this.subscription?.type === 'pro' && this.subscription?.expiresAt > new Date();
+};
+// Ensure indexes are created
+apiUserSchema.index({ apiKey: 1 }, { unique: true });
+apiUserSchema.index({ apiSecretHash: 1 }, { unique: true });
+apiUserSchema.index({ username: 1 }, { unique: true });
+apiUserSchema.index({ email: 1 }, { unique: true });
+
+// Don't return sensitive data by default
+apiUserSchema.set('toJSON', {
+    transform: (doc, ret) => {
+        delete ret.apiSecretHash;
+        delete ret.__v;
+        return ret;
+    }
+});
 
 module.exports = mongoose.model('ApiUser', apiUserSchema);

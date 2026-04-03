@@ -143,7 +143,8 @@ router.post('/api-users/:id/extend', adminAuth, async (req, res) => {
     const newExpiry = await apiUser.extendExpiration(days);
 
     await createAuditLog({
-      actorType: 'api_user',
+      actorType: 'admin',  // FIXED: Changed from 'api_user' to 'admin'
+      actorId: req.userId,
       action: 'EXTEND_API_USER',
       targetId: apiUser._id,
       targetType: 'api_user',
@@ -161,9 +162,10 @@ router.post('/api-users/:id/extend', adminAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('❌ Extend API user error:', err);
-    res.status(500).json({ message: 'Failed to extend expiration' });
+    res.status(500).json({ message: 'Failed to extend expiration: ' + err.message });
   }
 });
+
 
 // SET API user expiration (replace)
 router.post('/api-users/:id/set-expiration', adminAuth, async (req, res) => {
@@ -192,6 +194,7 @@ router.post('/api-users/:id/set-expiration', adminAuth, async (req, res) => {
 
     await createAuditLog({
       actorType: 'admin',
+      actorId: req.userId,
       action: 'SET_API_USER_EXPIRATION',
       targetId: apiUser._id,
       targetType: 'api_user',
@@ -209,7 +212,7 @@ router.post('/api-users/:id/set-expiration', adminAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('❌ Set API user expiration error:', err);
-    res.status(500).json({ message: 'Failed to set expiration' });
+    res.status(500).json({ message: 'Failed to set expiration: ' + err.message });
   }
 });
 
@@ -267,80 +270,188 @@ router.get('/api-users', adminAuth, async (req, res) => {
 
 // CREATE API user
 router.post('/api-users', adminAuth, async (req, res) => {
-  try {
-    const { username, email, maxConcurrent, maxDuration, expirationDays = 30 } = req.body;
+    try {
+        console.log('=== CREATE API USER REQUEST ===');
+        
+        let requestData = req.body;
+        
+        // Handle encrypted request
+        if (req.body.encrypted && req.body.hash) {
+            try {
+                const decryptedData = decryptData(req.body.encrypted);
+                const calculatedHash = createHash(decryptedData);
+                
+                if (calculatedHash !== req.body.hash) {
+                    return res.status(400).json({ message: 'Data integrity check failed' });
+                }
+                
+                const currentTime = Date.now();
+                const timeDiff = Math.abs(currentTime - (decryptedData.timestamp || currentTime));
+                
+                if (timeDiff > 5 * 60 * 1000) {
+                    return res.status(400).json({ message: 'Request expired. Please try again.' });
+                }
+                
+                requestData = decryptedData;
+            } catch (err) {
+                console.error('Decryption error:', err);
+                return res.status(400).json({ message: 'Invalid encrypted payload' });
+            }
+        }
+        
+        let { username, email, maxConcurrent, maxDuration, expirationDays = 30 } = requestData;
 
-    // Validation
-    if (!username || !username.match(/^[a-zA-Z0-9_]{3,30}$/)) {
-      return res.status(400).json({ message: 'Username must be 3-30 chars (letters, numbers, underscore)' });
+        // Validate and sanitize username
+        if (!username) {
+            return res.status(400).json({ message: 'Username is required' });
+        }
+        
+        username = username.trim().toLowerCase();
+        
+        if (username.length < 3 || username.length > 30) {
+            return res.status(400).json({ message: 'Username must be between 3 and 30 characters' });
+        }
+        
+        // Allow only valid characters
+        const validUsernameRegex = /^[a-zA-Z0-9_.-]+$/;
+        if (!validUsernameRegex.test(username)) {
+            return res.status(400).json({ 
+                message: 'Username can only contain letters, numbers, underscores, dots, and hyphens' 
+            });
+        }
+        
+        // Validate email
+        if (!email) {
+            return res.status(400).json({ message: 'Email is required' });
+        }
+        
+        email = email.trim().toLowerCase();
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            return res.status(400).json({ message: 'Invalid email format' });
+        }
+
+        // Check if user already exists
+        const existingUser = await ApiUser.findOne({ 
+            $or: [{ username }, { email }] 
+        });
+        
+        if (existingUser) {
+            const field = existingUser.username === username ? 'Username' : 'Email';
+            return res.status(400).json({ message: `${field} already exists` });
+        }
+
+        // Generate unique credentials with collision handling
+        let apiKey, apiSecret, apiSecretHash;
+        
+        try {
+            apiKey = await ApiUser.generateUniqueApiKey();
+            const secretData = await ApiUser.generateUniqueApiSecret();
+            apiSecret = secretData.raw;
+            apiSecretHash = secretData.hashed;
+        } catch (err) {
+            console.error('Credential generation error:', err);
+            return res.status(500).json({ message: 'Failed to generate unique credentials. Please try again.' });
+        }
+
+        // Calculate expiration date
+        const expiresAt = expirationDays > 0 
+            ? new Date(Date.now() + expirationDays * 24 * 60 * 60 * 1000) 
+            : null;
+
+        // Create API user
+        const apiUser = new ApiUser({
+            username,
+            email,
+            apiKey,
+            apiSecretHash,
+            limits: {
+                maxConcurrent: maxConcurrent || 2,
+                maxDuration: maxDuration || 300
+            },
+            status: 'active',
+            expiresAt: expiresAt,
+            createdBy: req.userId
+        });
+
+        await apiUser.save();
+
+        // Log the creation
+        await createAuditLog({
+            actorType: 'admin',
+            actorId: req.userId,
+            action: 'CREATE_API_USER',
+            targetId: apiUser._id,
+            targetType: 'api_user',
+            changes: { username, email, maxConcurrent, maxDuration, expirationDays },
+            ip: req.ip,
+            userAgent: req.headers['user-agent'],
+            success: true
+        });
+
+        // Prepare response with the raw apiSecret (only shown once)
+        const responseData = {
+            success: true,
+            message: 'API user created successfully',
+            user: {
+                id: apiUser._id,
+                username: apiUser.username,
+                email: apiUser.email,
+                apiKey: apiUser.apiKey,
+                apiSecret: apiSecret, // Raw secret - only shown once!
+                limits: apiUser.limits,
+                status: apiUser.status,
+                expiresAt: apiUser.expiresAt,
+                daysRemaining: apiUser.getDaysRemaining(),
+                createdAt: apiUser.createdAt
+            },
+            warning: 'Save the apiSecret now! It will not be shown again.',
+            timestamp: Date.now()
+        };
+        
+        // Encrypt the response
+        const encryptedResponse = encryptResponse(responseData);
+        const responseHash = createHash(responseData);
+        
+        res.status(201).json({
+            encrypted: encryptedResponse,
+            hash: responseHash,
+        });
+        
+    } catch (err) {
+        console.error('❌ Create API user error:', err);
+        
+        // Handle duplicate key errors
+        if (err.code === 11000) {
+            const field = Object.keys(err.keyPattern || {})[0];
+            let message = '';
+            switch(field) {
+                case 'username':
+                    message = 'Username already exists';
+                    break;
+                case 'email':
+                    message = 'Email already exists';
+                    break;
+                case 'apiKey':
+                    message = 'API key collision occurred. Please try again.';
+                    break;
+                case 'apiSecretHash':
+                    message = 'System error: Please try again.';
+                    break;
+                default:
+                    message = 'Duplicate entry. Please try again.';
+            }
+            return res.status(400).json({ message });
+        }
+        
+        // Handle validation errors
+        if (err.name === 'ValidationError') {
+            const messages = Object.values(err.errors).map(e => e.message);
+            return res.status(400).json({ message: messages.join(', ') });
+        }
+        
+        res.status(500).json({ message: 'Failed to create API user: ' + err.message });
     }
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ message: 'Invalid email format' });
-    }
-
-    // Check existing
-    const existing = await ApiUser.findOne({ $or: [{ username }, { email }] });
-    if (existing) {
-      return res.status(400).json({ message: 'Username or email already exists' });
-    }
-
-    // Generate credentials
-    const apiKey = 'ak_' + crypto.randomBytes(24).toString('hex');
-    const apiSecret = 'as_' + crypto.randomBytes(32).toString('hex');
-
-    // Calculate expiration date (default 30 days)
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + (expirationDays || 30));
-
-    const apiUser = new ApiUser({
-      username,
-      email: email.toLowerCase(),
-      apiKey,
-      apiSecret,
-      limits: {
-        maxConcurrent: maxConcurrent || 2,
-        maxDuration: maxDuration || 300
-      },
-      status: 'active',
-      expiresAt: expiresAt
-    });
-
-    await apiUser.save();
-
-    await createAuditLog({
-      actorType: 'api_user',
-      action: 'CREATE_API_USER',
-      targetId: apiUser._id,
-      targetType: 'api_user',
-      changes: { username, email, maxConcurrent, maxDuration, expirationDays },
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
-      success: true
-    });
-
-    res.status(201).json({
-      message: 'API user created successfully',
-      user: {
-        id: apiUser._id,
-        username: apiUser.username,
-        email: apiUser.email,
-        apiKey: apiUser.apiKey,
-        apiSecret: apiUser.apiSecret,
-        limits: apiUser.limits,
-        status: apiUser.status,
-        expiresAt: apiUser.expiresAt,
-        daysRemaining: apiUser.getDaysRemaining(),
-        createdAt: apiUser.createdAt
-      }
-    });
-  } catch (err) {
-    if (err.code === 11000) {
-      const field = Object.keys(err.keyPattern || {})[0] || 'field';
-      return res.status(400).json({ message: `${field} already in use` });
-    }
-    console.error('❌ Create API user error:', err);
-    res.status(500).json({ message: 'Failed to create API user' });
-  }
 });
 
 // GET single API user
@@ -380,6 +491,7 @@ router.patch('/api-users/:id/limits', adminAuth, async (req, res) => {
     }
 
     const oldLimits = { ...apiUser.limits };
+    const oldStatus = apiUser.status;
 
     if (maxConcurrent !== undefined) apiUser.limits.maxConcurrent = maxConcurrent;
     if (maxDuration !== undefined) apiUser.limits.maxDuration = maxDuration;
@@ -388,17 +500,19 @@ router.patch('/api-users/:id/limits', adminAuth, async (req, res) => {
     await apiUser.save();
 
     await createAuditLog({
-      actorType: 'api_user',
+      actorType: 'admin',  // FIXED: Changed from 'api_user' to 'admin'
+      actorId: req.userId,
       action: 'UPDATE_API_USER',
       targetId: apiUser._id,
       targetType: 'api_user',
-      changes: { oldLimits, newLimits: apiUser.limits, status },
+      changes: { oldLimits, newLimits: apiUser.limits, oldStatus, newStatus: apiUser.status },
       ip: req.ip,
       userAgent: req.headers['user-agent'],
       success: true
     });
 
     res.json({
+      success: true,
       message: 'API user updated',
       user: {
         id: apiUser._id,
@@ -411,10 +525,9 @@ router.patch('/api-users/:id/limits', adminAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('❌ Update API user error:', err);
-    res.status(500).json({ message: 'Failed to update API user' });
+    res.status(500).json({ message: 'Failed to update API user: ' + err.message });
   }
 });
-
 // REGENERATE API secret
 router.post('/api-users/:id/regenerate-secret', adminAuth, async (req, res) => {
   try {
@@ -427,31 +540,56 @@ router.post('/api-users/:id/regenerate-secret', adminAuth, async (req, res) => {
       return res.status(404).json({ message: 'API user not found' });
     }
 
-    const newSecret = 'as_' + crypto.randomBytes(32).toString('hex');
-    apiUser.apiSecret = newSecret;
+    // Generate new unique secret with collision handling
+    let newSecretRaw, newSecretHash;
+    let attempts = 0;
+    const maxAttempts = 5;
+    let isUnique = false;
+    
+    while (!isUnique && attempts < maxAttempts) {
+      newSecretRaw = 'as_' + crypto.randomBytes(32).toString('hex');
+      newSecretHash = crypto.createHash('sha256').update(newSecretRaw).digest('hex');
+      
+      // Check if this hash already exists
+      const existing = await ApiUser.findOne({ apiSecretHash: newSecretHash });
+      if (!existing) {
+        isUnique = true;
+      }
+      attempts++;
+    }
+    
+    if (!isUnique) {
+      return res.status(500).json({ message: 'Failed to generate unique secret. Please try again.' });
+    }
+    
+    // Update the user with new hash
+    apiUser.apiSecretHash = newSecretHash;
     await apiUser.save();
 
     await createAuditLog({
-      actorType: 'api_user',
+      actorType: 'admin',
+      actorId: req.userId,
       action: 'REGENERATE_API_SECRET',
       targetId: apiUser._id,
       targetType: 'api_user',
-      changes: { regenerated: true },
+      changes: { username: apiUser.username, regenerated: true },
       ip: req.ip,
       userAgent: req.headers['user-agent'],
       success: true
     });
 
+    // Return the raw secret (only shown once)
     res.json({
+      success: true,
       message: 'API secret regenerated successfully',
-      apiSecret: newSecret
+      apiSecret: newSecretRaw,
+      warning: 'Save this secret now! It will not be shown again.'
     });
   } catch (err) {
     console.error('❌ Regenerate secret error:', err);
-    res.status(500).json({ message: 'Failed to regenerate secret' });
+    res.status(500).json({ message: 'Failed to regenerate secret: ' + err.message });
   }
 });
-
 // DELETE API user
 router.delete('/api-users/:id', adminAuth, async (req, res) => {
   try {
@@ -465,7 +603,8 @@ router.delete('/api-users/:id', adminAuth, async (req, res) => {
     }
 
     await createAuditLog({
-      actorType: 'api_user',
+      actorType: 'admin',  // FIXED: Changed from 'api_user' to 'admin'
+      actorId: req.userId,
       action: 'DELETE_API_USER',
       targetId: req.params.id,
       targetType: 'api_user',
@@ -475,10 +614,13 @@ router.delete('/api-users/:id', adminAuth, async (req, res) => {
       success: true
     });
 
-    res.json({ message: 'API user deleted successfully' });
+    res.json({ 
+      success: true,
+      message: 'API user deleted successfully' 
+    });
   } catch (err) {
     console.error('❌ Delete API user error:', err);
-    res.status(500).json({ message: 'Failed to delete API user' });
+    res.status(500).json({ message: 'Failed to delete API user: ' + err.message });
   }
 });
 
@@ -497,23 +639,20 @@ router.get('/api-users/:id/stats', adminAuth, async (req, res) => {
     const now = new Date();
     const activeCount = apiUser.activeAttacks?.filter(a => new Date(a.expiresAt) > now).length || 0;
 
-    // Calculate rate limit usage
-    const lastMinute = apiUser.requestHistory?.filter(r => now - new Date(r.timestamp) < 60 * 1000).length || 0;
-    const lastHour = apiUser.requestHistory?.filter(r => now - new Date(r.timestamp) < 60 * 60 * 1000).length || 0;
-    const lastDay = apiUser.requestHistory?.filter(r => now - new Date(r.timestamp) < 24 * 60 * 60 * 1000).length || 0;
-
-    res.json({
+    // Only include rate limit data if requestHistory exists in schema
+    const statsResponse = {
       username: apiUser.username,
+      email: apiUser.email,
       status: apiUser.status,
       limits: apiUser.limits,
       totalRequests: apiUser.totalRequests || 0,
       totalAttacks: apiUser.totalAttacks || 0,
       currentActiveAttacks: activeCount,
-      currentRateLimits: {
-        lastMinute,
-        lastHour,
-        lastDay
-      },
+      expiresAt: apiUser.expiresAt,
+      daysRemaining: apiUser.getDaysRemaining(),
+      isExpired: apiUser.isExpired(),
+      createdAt: apiUser.createdAt,
+      lastLoginAt: apiUser.lastLoginAt,
       activeAttacks: apiUser.activeAttacks
         .filter(a => new Date(a.expiresAt) > now)
         .map(a => ({
@@ -523,12 +662,28 @@ router.get('/api-users/:id/stats', adminAuth, async (req, res) => {
           startedAt: a.startedAt,
           expiresIn: Math.floor((new Date(a.expiresAt) - now) / 1000)
         }))
-    });
+    };
+
+    // Only add rate limits if requestHistory exists
+    if (apiUser.requestHistory) {
+      const lastMinute = apiUser.requestHistory?.filter(r => now - new Date(r.timestamp) < 60 * 1000).length || 0;
+      const lastHour = apiUser.requestHistory?.filter(r => now - new Date(r.timestamp) < 60 * 60 * 1000).length || 0;
+      const lastDay = apiUser.requestHistory?.filter(r => now - new Date(r.timestamp) < 24 * 60 * 60 * 1000).length || 0;
+      
+      statsResponse.currentRateLimits = {
+        lastMinute,
+        lastHour,
+        lastDay
+      };
+    }
+
+    res.json(statsResponse);
   } catch (err) {
     console.error('❌ Get API user stats error:', err);
-    res.status(500).json({ message: 'Failed to fetch stats' });
+    res.status(500).json({ message: 'Failed to fetch stats: ' + err.message });
   }
 });
+
 
 // ===== POST /api/admin/session — exchange secret for session token =====
 router.post('/session', async (req, res) => {
