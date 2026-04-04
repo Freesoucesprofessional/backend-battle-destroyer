@@ -5,7 +5,7 @@ const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const { authenticateApiUser } = require('../middleware/apiAuthMiddleware');
 const ApiUser = require('../models/ApiUser');
-const serveron = true
+const serveron = false
 // Apply authentication middleware
 router.use(authenticateApiUser);
 
