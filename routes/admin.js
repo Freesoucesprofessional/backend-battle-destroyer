@@ -45,6 +45,31 @@ function sendEncryptedError(res, statusCode, message) {
   return res.status(statusCode).json({ encrypted: encryptedError, hash: errorHash });
 }
 
+function encryptData(data) {
+    const jsonString = JSON.stringify({
+        ...data,
+        timestamp: Date.now()
+    });
+    return CryptoJS.AES.encrypt(jsonString, ENCRYPTION_KEY).toString();
+}
+
+function decryptData(encryptedData) {
+    try {
+        const bytes = CryptoJS.AES.decrypt(encryptedData, ENCRYPTION_KEY);
+        const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+        if (!decrypted) throw new Error('Decryption failed');
+        return JSON.parse(decrypted);
+    } catch (error) {
+        console.error('Decryption error:', error);
+        throw new Error('Invalid encrypted data');
+    }
+}
+
+function createHash(data) {
+    const jsonString = JSON.stringify(data);
+    return CryptoJS.SHA256(jsonString + ENCRYPTION_KEY).toString();
+}
+
 // ===== REDIS SESSION STORE =====
 const redis = require('redis');
 const redisClient = redis.createClient({
