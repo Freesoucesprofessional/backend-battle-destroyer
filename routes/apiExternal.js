@@ -121,64 +121,97 @@ router.post('/attack', async (req, res) => {
             console.log(`[API Attack] External API response status: ${externalResponse.status}`);
             console.log(`[API Attack] External API response data:`, externalResponse.data);
             
-            // Check if external API call was successful
-            if (externalResponse.status !== 200 || externalResponse.data?.error) {
-                const errorMsg = externalResponse.data?.error || `External API returned status ${externalResponse.status}`;
-                console.error(`[API Attack] External API error: ${errorMsg}`);
-                
+            // Check if external API call was successful (status 200)
+            if (externalResponse.status !== 200) {
+                console.error(`[API Attack] External API returned non-200 status: ${externalResponse.status}`);
                 return res.status(500).json({
                     error: 'Failed to launch attack',
-                    message: errorMsg,
-                    details: 'External service returned an error'
+                    message: `External service returned status ${externalResponse.status}`,
+                    details: 'Service temporarily unavailable'
                 });
             }
             
-            // Track the attack in our database
-            await apiUser.addActiveAttack(attackId, ip, portNum, durationSec);
-            apiUser.totalRequests = (apiUser.totalRequests || 0) + 1;
-            await apiUser.save();
+            // Check the launched value in the response
+            const launched = externalResponse.data?.launched;
+            const total = externalResponse.data?.total;
             
-            // Auto cleanup after duration
-            setTimeout(async () => {
-                try {
-                    const freshUser = await ApiUser.findById(apiUser._id);
-                    if (freshUser) {
-                        await freshUser.removeActiveAttack(attackId);
-                        console.log(`[API Attack] Cleaned up attack ${attackId} for user ${apiUser.username}`);
+            if (launched === 1) {
+                // Attack was successfully launched
+                console.log(`[API Attack] Attack successfully launched. Launched: ${launched}, Total: ${total}`);
+                
+                // Track the attack in our database
+                await apiUser.addActiveAttack(attackId, ip, portNum, durationSec);
+                apiUser.totalRequests = (apiUser.totalRequests || 0) + 1;
+                await apiUser.save();
+                
+                // Auto cleanup after duration
+                setTimeout(async () => {
+                    try {
+                        const freshUser = await ApiUser.findById(apiUser._id);
+                        if (freshUser) {
+                            await freshUser.removeActiveAttack(attackId);
+                            console.log(`[API Attack] Cleaned up attack ${attackId} for user ${apiUser.username}`);
+                        }
+                    } catch (err) {
+                        console.error('[API Attack] Cleanup error:', err.message);
                     }
-                } catch (err) {
-                    console.error('[API Attack] Cleanup error:', err.message);
-                }
-            }, durationSec * 1000);
-            
-            // Get updated count
-            const newActiveCount = await apiUser.getActiveCount();
-            
-            // Return success response
-            res.json({
-                success: true,
-                message: `Attack launched successfully against ${ip}:${port} for ${durationSec} seconds`,
-                attack: {
-                    id: attackId,
-                    target: ip,
-                    port: portNum,
-                    duration: durationSec,
-                    endsAt: new Date(Date.now() + durationSec * 1000).toISOString(),
-                    endsIn: `${durationSec} seconds`
-                },
-                limits: {
-                    maxConcurrent: apiUser.limits.maxConcurrent,
-                    maxDuration: apiUser.limits.maxDuration,
-                    currentActive: newActiveCount,
-                    remainingSlots: apiUser.limits.maxConcurrent - newActiveCount
-                },
-                account: {
-                    username: apiUser.username,
-                    status: apiUser.status,
-                    expiresAt: apiUser.expiresAt,
-                    daysRemaining: apiUser.getDaysRemaining()
-                }
-            });
+                }, durationSec * 1000);
+                
+                // Get updated count
+                const newActiveCount = await apiUser.getActiveCount();
+                
+                // Return success response
+                res.json({
+                    success: true,
+                    message: `Attack launched successfully against ${ip}:${port} for ${durationSec} seconds`,
+                    attack: {
+                        id: attackId,
+                        target: ip,
+                        port: portNum,
+                        duration: durationSec,
+                        endsAt: new Date(Date.now() + durationSec * 1000).toISOString(),
+                        endsIn: `${durationSec} seconds`
+                    },
+                    limits: {
+                        maxConcurrent: apiUser.limits.maxConcurrent,
+                        maxDuration: apiUser.limits.maxDuration,
+                        currentActive: newActiveCount,
+                        remainingSlots: apiUser.limits.maxConcurrent - newActiveCount
+                    },
+                    account: {
+                        username: apiUser.username,
+                        status: apiUser.status,
+                        expiresAt: apiUser.expiresAt,
+                        daysRemaining: apiUser.getDaysRemaining()
+                    }
+                });
+                
+            } else if (launched === 0) {
+                // Attack failed - amplification connection error
+                console.error(`[API Attack] Attack failed - botnet amplification connection error. Launched: ${launched}, Total: ${total}`);
+                
+                // Check if there's an error message in the response
+                const errorMessage = externalResponse.data?.message || externalResponse.data?.error || 'Error occurred during connection botnet amplification';
+                
+                return res.status(500).json({
+                    error: 'Attack failed - Amplification connection error',
+                    message: errorMessage,
+                    details: {
+                        launched: launched,
+                        total: total,
+                        reason: 'Unable to establish amplification connection'
+                    }
+                });
+                
+            } else {
+                // Unexpected launched value
+                console.error(`[API Attack] Unexpected launched value: ${launched}`);
+                return res.status(500).json({
+                    error: 'Failed to launch attack',
+                    message: 'Invalid response from external service',
+                    details: `Expected launched=0 or 1, got: ${launched}`
+                });
+            }
             
         } catch (externalError) {
             console.error('[API Attack] External API error:', externalError.message);
@@ -202,7 +235,6 @@ router.post('/attack', async (req, res) => {
         });
     }
 });
-
 // Get active attacks
 router.get('/active', async (req, res) => {
     try {
