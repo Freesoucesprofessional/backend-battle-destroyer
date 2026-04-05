@@ -225,39 +225,11 @@ app.use('/api/api-auth', apiAuthRoutes);
 // ===== ROUTES MOUNTING =====
 
 // Public routes
-app.get('/', async (req, res) => {
-  try {
-    const bgmiHealth = await bgmiService.checkHealth();
-    res.json({
-      message: '✅ Battle Destroyer API is running',
-      version: '1.0.0',
-      endpoints: {
-        public: ['GET /', 'GET /api/bgmi/health', 'GET /api/csrf-token'],
-        auth: ['POST /api/auth/login', 'POST /api/auth/register'],
-        api: ['POST /api/v1/attack', 'GET /api/v1/stats', 'GET /api/v1/health'],
-        admin: ['POST /api/admin/api-users', 'GET /api/admin/api-users']
-      },
-      bgmiHealth: {
-        healthy: bgmiHealth.healthy,
-        total: bgmiHealth.total,
-        successRate: bgmiHealth.successRate
-      },
-      environment: process.env.NODE_ENV || 'development'
-    });
-  } catch (error) {
-    res.json({
-      message: '✅ Battle Destroyer API is running (BGMI health check failed)',
-      version: '1.0.0',
-      endpoints: {
-        public: ['GET /', 'GET /api/bgmi/health', 'GET /api/csrf-token'],
-        auth: ['POST /api/auth/login', 'POST /api/auth/register'],
-        api: ['POST /api/v1/attack', 'GET /api/v1/stats', 'GET /api/v1/health'],
-        admin: ['POST /api/admin/api-users', 'GET /api/admin/api-users']
-      },
-      bgmiHealth: { healthy: 0, total: 0, successRate: '0%' },
-      environment: process.env.NODE_ENV || 'development'
-    });
-  }
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Server is running',
+    status: 'active'
+  });
 });
 
 // BGMI health check endpoint
