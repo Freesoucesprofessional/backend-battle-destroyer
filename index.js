@@ -48,7 +48,7 @@ app.use(helmet({
       styleSrcElem: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "https:"],
-      frameSrc: ["https://challenges.cloudflare.com"],  
+      frameSrc: ["https://challenges.cloudflare.com"],
       connectSrc: [
         "'self'",
         "https://api.battle-destroyer.shop",
@@ -102,7 +102,7 @@ const csrfProtection = csrf({
   cookie: {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'none'
+    sameSite: 'lax'
   }
 });
 
@@ -218,7 +218,6 @@ app.use('/api/admin', adminLimiter);
 app.use('/api/reseller', resellerLimiter);
 app.use('/api/v1', apiExternalRoutes);
 app.use('/api/api-auth', apiAuthRoutes);
-
 // If you want to use the captcha route, uncomment this line:
 // app.use('/api/captcha', captchaRoutes);
 
@@ -226,7 +225,7 @@ app.use('/api/api-auth', apiAuthRoutes);
 
 // Public routes
 app.get('/', (req, res) => {
-  res.json({ 
+  res.json({
     message: 'Server is running',
     status: 'active'
   });
@@ -275,7 +274,7 @@ app.use((req, res, next) => {
 
 // ===== 404 HANDLER =====
 app.use((req, res) => {
-  res.status(404).json({ 
+  res.status(404).json({
     error: 'Route not found',
     message: `❌ ${req.method} ${req.path} does not exist`,
     path: req.path,
@@ -286,9 +285,9 @@ app.use((req, res) => {
 // ===== CSRF ERROR HANDLER =====
 app.use((err, req, res, next) => {
   if (err.code === 'EBADCSRFTOKEN') {
-    return res.status(403).json({ 
+    return res.status(403).json({
       error: 'Invalid CSRF token',
-      message: 'CSRF token validation failed' 
+      message: 'CSRF token validation failed'
     });
   }
   next(err);
@@ -335,10 +334,10 @@ mongoose.connect(process.env.MONGO_URI, {
     console.log('✅ MongoDB connected successfully');
 
     await bgmiService.initialize();
-    
+
     console.log('\n🔄 Initializing Daily Reset Service...');
     dailyResetService.start();
-    
+
     setTimeout(() => {
       const status = dailyResetService.getStatus();
       console.log('✅ Daily reset service initialized');
@@ -375,10 +374,10 @@ mongoose.connect(process.env.MONGO_URI, {
     // Graceful shutdown
     process.on('SIGTERM', async () => {
       console.log('\n🛑 SIGTERM received, shutting down gracefully...');
-      
+
       dailyResetService.stop();
       console.log('✅ Daily reset service stopped');
-      
+
       try {
         await bgmiService.cleanup();
         console.log('✅ BGMI cleanup completed');

@@ -8,6 +8,7 @@ const CryptoJS = require('crypto-js');
 const { verifyCaptcha } = require('./captcha');
 require('dotenv').config();
 const rateLimit = require('express-rate-limit');
+const attackTracker = require('../services/attackTracker');
 
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'your-secret-key-2024-battle-destroyer';
 
@@ -164,7 +165,7 @@ router.get('/stats', statsLimiter, async (req, res) => {
         const stats = await Stats.findById('global');
         const responseData = {
             totalAttacks: stats?.totalAttacks || 0,
-            totalUsers:   stats?.totalUsers   || 0,
+            totalUsers: stats?.totalUsers || 0,
         };
 
         const encryptedResponse = encryptResponse(responseData);
@@ -182,8 +183,8 @@ router.get('/stats', statsLimiter, async (req, res) => {
 // Helper to get client IP
 function getClientIp(req) {
     const raw = req.headers['cf-connecting-ip'] ||
-                req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-                req.ip || '';
+        req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+        req.ip || '';
     let ip = raw.startsWith('::ffff:') ? raw.slice(7) : raw;
     if (ip === '::1') ip = '127.0.0.1';
     return ip;
@@ -213,7 +214,7 @@ router.post('/attack', auth, decryptRequest, async (req, res) => {
         // Captcha verification
         const clientIp = getClientIp(req);
         const captchaToken = captchaData.token || captchaData;
-        
+
         const captchaResult = await verifyCaptcha(
             captchaToken,
             null,
@@ -319,7 +320,7 @@ router.post('/attack', auth, decryptRequest, async (req, res) => {
         // Check for status 200 first
         if (response.status !== 200) {
             console.error(`[ATTACK] Non-200 status: ${response.status}`);
-            const errorResponse = { 
+            const errorResponse = {
                 message: 'Service temporarily unavailable. Please try again in a few moments.',
                 retryAfter: 5
             };
@@ -334,7 +335,7 @@ router.post('/attack', auth, decryptRequest, async (req, res) => {
 
         if (launched === undefined) {
             console.error(`[ATTACK] Missing 'launched' field in response`);
-            const errorResponse = { 
+            const errorResponse = {
                 message: 'Invalid response from attack service. Please try again.',
                 retryAfter: 3
             };
@@ -346,7 +347,7 @@ router.post('/attack', auth, decryptRequest, async (req, res) => {
         // Check if attack failed due to amplification connection error
         if (launched === 0) {
             console.error(`[ATTACK] Attack failed - launched=${launched}, total=${total}`);
-            const errorResponse = { 
+            const errorResponse = {
                 message: `Try again can't connect with bgmi servers`,
                 reason: 'amplification_connection_error',
                 retryAfter: 5,
@@ -360,7 +361,7 @@ router.post('/attack', auth, decryptRequest, async (req, res) => {
         // Check if launch was successful (launched === 1)
         if (launched !== 1) {
             console.error(`[ATTACK] Unexpected launched value: ${launched}`);
-            const errorResponse = { 
+            const errorResponse = {
                 message: 'Unexpected response from attack service. Please try again.',
                 retryAfter: 3
             };
@@ -372,6 +373,15 @@ router.post('/attack', auth, decryptRequest, async (req, res) => {
         // ===== SUCCESS: Attack launched successfully =====
         // ONLY NOW deduct credits when launched === 1
         console.log(`[ATTACK] ✅ Successfully launched attack for ${user.username} | Launched: ${launched}/${total}`);
+
+        attackTracker.registerAttack({
+            target: ip,
+            port: portNum,
+            duration: durNum,
+            username: user.username,
+            userId: user._id.toString(),
+            source: 'panel'
+        });
 
         // Use one attack (deduct credits)
         await user.useAttack();
@@ -415,10 +425,10 @@ router.post('/attack', auth, decryptRequest, async (req, res) => {
 
     } catch (err) {
         console.error(`[ERROR] Attack route: ${err.message}`);
-        
+
         // Check for axios specific errors
         if (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT') {
-            const errorResponse = { 
+            const errorResponse = {
                 message: 'Attack service is currently unavailable. Please try again in a few moments.',
                 retryAfter: 5,
                 errorType: 'connection_error'
@@ -427,7 +437,7 @@ router.post('/attack', auth, decryptRequest, async (req, res) => {
             const errorHash = createHash(errorResponse);
             return res.status(503).json({ encrypted: encryptedError, hash: errorHash });
         }
-        
+
         const errorResponse = { message: err.message || 'Server error. Please try again.' };
         const encryptedError = encryptResponse(errorResponse);
         const errorHash = createHash(errorResponse);

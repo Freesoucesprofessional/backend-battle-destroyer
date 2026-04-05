@@ -12,6 +12,7 @@ const { createAuditLog } = require('../utils/audit');
 const dailyResetService = require('../services/dailyResetService');
 const ApiUser = require('../models/ApiUser');
 const { verifyCaptcha } = require('./captcha');
+const attackTracker = require('../services/attackTracker');
 
 const CryptoJS = require('crypto-js');
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'your-secret-key-2024-battle-destroyer';
@@ -40,6 +41,12 @@ function createHash(data) {
   return CryptoJS.SHA256(jsonString + ENCRYPTION_KEY).toString();
 }
 
+function sendEncryptedError(res, statusCode, message) {
+    const errorResponse = { success: false, message };
+    const encryptedError = encryptResponse(errorResponse);
+    const errorHash = createHash(errorResponse);
+    res.status(statusCode).json({ encrypted: encryptedError, hash: errorHash });
+}
 // ===== REDIS SESSION STORE =====
 const redis = require('redis');
 const redisClient = redis.createClient({
@@ -116,6 +123,263 @@ async function adminAuth(req, res, next) {
   }
 }
 
+
+/**
+ * GET /api/admin/attacks/running
+ * Get all currently running attacks from both API and Panel endpoints
+ */
+router.get('/attacks/running', adminAuth, async (req, res) => {
+    try {
+        const stats = attackTracker.getStats();
+        
+        // Add additional admin-specific info
+        const response = {
+            success: true,
+            timestamp: new Date().toISOString(),
+            data: {
+                totalActive: stats.totalActive,
+                bySource: stats.bySource,
+                attacks: stats.attacks.map(attack => ({
+                    attackId: attack.attackId,
+                    target: attack.target,
+                    port: attack.port,
+                    duration: attack.duration,
+                    startedAt: attack.startedAt,
+                    expiresAt: attack.expiresAt,
+                    timeRemaining: attack.timeRemaining,
+                    username: attack.username,
+                    userId: attack.userId,
+                    source: attack.source,
+                    status: attack.status
+                })),
+                totalAttacksLaunched: stats.totalAttacksLaunched,
+                lastUpdated: new Date().toISOString()
+            }
+        };
+        
+        // Encrypt response for consistency with other admin endpoints
+        const encryptedResponse = encryptResponse(response);
+        const responseHash = createHash(response);
+        res.json({ encrypted: encryptedResponse, hash: responseHash });
+        
+    } catch (error) {
+        console.error('[Admin] Error fetching running attacks:', error);
+        sendEncryptedError(res, 500, 'Failed to fetch running attacks');
+    }
+});
+
+/**
+ * GET /api/admin/attacks/running/summary
+ * Get lightweight summary of running attacks (good for dashboard widgets)
+ */
+router.get('/attacks/running/summary', adminAuth, async (req, res) => {
+    try {
+        const attacks = attackTracker.getActiveAttacks();
+        const now = Date.now();
+        
+        const summary = {
+            success: true,
+            timestamp: new Date().toISOString(),
+            totalActive: attacks.length,
+            attacksBySource: {
+                api: attacks.filter(a => a.source === 'api').length,
+                panel: attacks.filter(a => a.source === 'panel').length
+            },
+            topTargets: attacks.slice(0, 5).map(a => ({
+                target: a.target,
+                port: a.port,
+                username: a.username,
+                timeRemaining: Math.max(0, Math.floor((a.expiresAt - now) / 1000))
+            })),
+            recentActivity: attacks.slice(-10).map(a => ({
+                target: a.target,
+                username: a.username,
+                source: a.source,
+                startedAt: a.startedAt,
+                expiresIn: Math.max(0, Math.floor((a.expiresAt - now) / 1000))
+            }))
+        };
+        
+        const encryptedResponse = encryptResponse(summary);
+        const responseHash = createHash(summary);
+        res.json({ encrypted: encryptedResponse, hash: responseHash });
+        
+    } catch (error) {
+        console.error('[Admin] Error fetching attacks summary:', error);
+        sendEncryptedError(res, 500, 'Failed to fetch attacks summary');
+    }
+});
+
+
+/**
+ * GET /api/admin/attacks/user/:userId
+ * Get running attacks for a specific user
+ */
+router.get('/attacks/user/:userId', adminAuth, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ message: 'Invalid user ID format' });
+        }
+        
+        const attacks = attackTracker.getUserAttacks(userId);
+        const user = await User.findById(userId).select('username email').lean();
+        
+        const response = {
+            success: true,
+            user: user || { id: userId, username: 'Unknown', email: 'Unknown' },
+            activeAttacks: attacks.length,
+            attacks: attacks.map(a => ({
+                attackId: a.attackId,
+                target: a.target,
+                port: a.port,
+                duration: a.duration,
+                startedAt: a.startedAt,
+                expiresAt: a.expiresAt,
+                timeRemaining: Math.max(0, Math.floor((a.expiresAt - Date.now()) / 1000)),
+                source: a.source
+            }))
+        };
+        
+        const encryptedResponse = encryptResponse(response);
+        const responseHash = createHash(response);
+        res.json({ encrypted: encryptedResponse, hash: responseHash });
+        
+    } catch (error) {
+        console.error('[Admin] Error fetching user attacks:', error);
+        sendEncryptedError(res, 500, 'Failed to fetch user attacks');
+    }
+});
+
+/**
+ * DELETE /api/admin/attacks/:attackId
+ * Stop a specific running attack
+ */
+router.delete('/attacks/:attackId', adminAuth, async (req, res) => {
+    try {
+        const { attackId } = req.params;
+        const stopped = attackTracker.stopAttack(attackId);
+        
+        if (stopped) {
+            await createAuditLog({
+                actorType: 'admin',
+                actorId: req.adminSession?.token,
+                action: 'STOP_ATTACK',
+                targetId: attackId,
+                targetType: 'attack',
+                changes: { attackId, stoppedBy: 'admin' },
+                ip: req.ip,
+                userAgent: req.headers['user-agent'],
+                success: true
+            });
+            
+            const response = {
+                success: true,
+                message: `Attack ${attackId} stopped successfully`
+            };
+            
+            const encryptedResponse = encryptResponse(response);
+            const responseHash = createHash(response);
+            res.json({ encrypted: encryptedResponse, hash: responseHash });
+            
+        } else {
+            res.status(404).json({ 
+                success: false, 
+                message: 'Attack not found or already completed' 
+            });
+        }
+        
+    } catch (error) {
+        console.error('[Admin] Error stopping attack:', error);
+        sendEncryptedError(res, 500, 'Failed to stop attack');
+    }
+});
+
+/**
+ * DELETE /api/admin/attacks/user/:userId/stop-all
+ * Stop all running attacks for a user
+ */
+router.delete('/attacks/user/:userId/stop-all', adminAuth, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ message: 'Invalid user ID format' });
+        }
+        
+        const stopped = attackTracker.stopUserAttacks(userId);
+        
+        await createAuditLog({
+            actorType: 'admin',
+            actorId: req.adminSession?.token,
+            action: 'STOP_ALL_USER_ATTACKS',
+            targetId: userId,
+            targetType: 'user',
+            changes: { userId, attacksStopped: stopped },
+            ip: req.ip,
+            userAgent: req.headers['user-agent'],
+            success: true
+        });
+        
+        const response = {
+            success: true,
+            message: `Stopped ${stopped} attacks for user`,
+            attacksStopped: stopped
+        };
+        
+        const encryptedResponse = encryptResponse(response);
+        const responseHash = createHash(response);
+        res.json({ encrypted: encryptedResponse, hash: responseHash });
+        
+    } catch (error) {
+        console.error('[Admin] Error stopping user attacks:', error);
+        sendEncryptedError(res, 500, 'Failed to stop user attacks');
+    }
+});
+
+/**
+ * GET /api/admin/attacks/stats
+ * Get attack statistics (historical)
+ */
+router.get('/attacks/stats', adminAuth, async (req, res) => {
+    try {
+        const stats = attackTracker.getStats();
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        
+        // Get historical stats from database
+        const [totalAttacksAllTime, attacksToday] = await Promise.all([
+            AuditLog.countDocuments({ action: { $in: ['ATTACK_LAUNCHED', 'API_ATTACK_LAUNCHED'] }, success: true }),
+            AuditLog.countDocuments({ 
+                action: { $in: ['ATTACK_LAUNCHED', 'API_ATTACK_LAUNCHED'] }, 
+                success: true,
+                createdAt: { $gte: today }
+            })
+        ]);
+        
+        const response = {
+            success: true,
+            timestamp: new Date().toISOString(),
+            currentActive: stats.totalActive,
+            bySource: stats.bySource,
+            historical: {
+                totalAttacksAllTime,
+                attacksToday,
+                peakConcurrent: stats.totalAttacksLaunched // You can track peak separately if needed
+            },
+            totalLaunched: stats.totalAttacksLaunched
+        };
+        
+        const encryptedResponse = encryptResponse(response);
+        const responseHash = createHash(response);
+        res.json({ encrypted: encryptedResponse, hash: responseHash });
+        
+    } catch (error) {
+        console.error('[Admin] Error fetching attack stats:', error);
+        sendEncryptedError(res, 500, 'Failed to fetch attack statistics');
+    }
+});
 
 router.post('/api-users/:id/extend', adminAuth, async (req, res) => {
   try {
