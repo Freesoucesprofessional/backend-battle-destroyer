@@ -68,10 +68,23 @@ UserSchema.pre('save', async function () {
 });
 
 // Check if user has active pro subscription
-UserSchema.methods.isProUser = function() {
-  if (this.subscription.type !== 'pro') return false;
-  if (!this.subscription.expiresAt) return false;
-  return this.subscription.expiresAt > new Date();
+// models/User.js
+userSchema.methods.isProUser = function() {
+    // Check if user has Pro flag AND subscription is not expired
+    if (!this.isPro) return false;
+    
+    // If no subscription object, not a Pro user
+    if (!this.subscription) return false;
+    
+    // Check if subscription is expired
+    if (this.subscription.expiresAt && this.subscription.expiresAt < new Date()) {
+        // Auto-downgrade expired Pro users
+        this.isPro = false;
+        this.save(); // Don't await to avoid blocking
+        return false;
+    }
+    
+    return this.subscription.type === 'pro';
 };
 
 // Check and reset daily credits for pro users
@@ -129,53 +142,112 @@ UserSchema.methods.refreshProBenefits = async function() {
 };
 
 // Check if user can attack
-UserSchema.methods.canAttack = async function() {
-  await this.checkAndResetDailyCredits();
-  
-  if (this.isProUser()) {
-    // Pro users: check daily credits
-    return this.subscription.dailyCredits > 0;
-  } else {
-    // Free users: check credit balance
+userSchema.methods.canAttack = async function() {
+    // ✅ PRO USERS HAVE NO DAILY LIMIT - Check this FIRST!
+    if (this.isProUser()) {
+        // Only check if subscription is active
+        if (this.subscription && this.subscription.expiresAt > new Date()) {
+            return true;  // Unlimited attacks for Pro users
+        }
+        // If subscription expired, fall through to free user logic
+    }
+    
+    // ==========================================
+    // FREE USERS ONLY FROM HERE
+    // ==========================================
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Initialize dailyAttacks if needed
+    if (!this.dailyAttacks) {
+        this.dailyAttacks = { count: 0, date: today };
+        await this.save();
+    }
+    
+    // Reset daily attacks if new day
+    if (this.dailyAttacks.date < today) {
+        this.dailyAttacks = { count: 0, date: today };
+        await this.save();
+    }
+    
+    // Free users: Check if they've reached 30 daily attacks
+    if (this.dailyAttacks.count >= 30) {
+        return false;  // Free user reached daily limit
+    }
+    
+    // Free users also need credits
     return this.credits > 0;
-  }
 };
-
 // Use one attack
-UserSchema.methods.useAttack = async function() {
-  await this.checkAndResetDailyCredits();
-  
-  if (this.isProUser()) {
-    // Pro users: deduct from daily credits
-    if (this.subscription.dailyCredits <= 0) {
-      throw new Error('Daily attack limit reached. Please try again tomorrow.');
+userSchema.methods.useAttack = async function() {
+    // ✅ Pro users: Track for stats but no deduction
+    if (this.isProUser()) {
+        // Check if subscription is active
+        if (this.subscription && this.subscription.expiresAt > new Date()) {
+            // Only track for statistics, not for limiting
+            this.totalAttacks = (this.totalAttacks || 0) + 1;
+            
+            // Optional: Track daily stats for Pro users (but don't limit)
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            if (!this.dailyAttacks || this.dailyAttacks.date < today) {
+                this.dailyAttacks = { count: 1, date: today };
+            } else {
+                this.dailyAttacks.count += 1;
+            }
+            
+            await this.save();
+            return true;
+        }
+        // If expired, fall through to free user logic
     }
-    this.subscription.dailyCredits -= 1;
-  } else {
-    // Free users: deduct from credits
-    if (this.credits <= 0) {
-      throw new Error('Insufficient credits. Please purchase credits or upgrade to pro.');
+    
+    // FREE USERS: Deduct one credit/attack
+    if (this.credits > 0) {
+        this.credits -= 1;
+        this.totalAttacks = (this.totalAttacks || 0) + 1;
+        
+        // Also track daily attacks for free users
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        if (!this.dailyAttacks || this.dailyAttacks.date < today) {
+            this.dailyAttacks = { count: 1, date: today };
+        } else {
+            this.dailyAttacks.count += 1;
+        }
+        
+        await this.save();
+        return true;
     }
-    this.credits -= 1;
-  }
-  
-  // Update daily attack count
-  this.dailyAttacks.count += 1;
-  this.totalAttacks += 1;
-  
-  await this.save();
-  return true;
+    
+    return false;
 };
-
 // Get remaining attacks for today
-UserSchema.methods.getRemainingAttacks = async function() {
-  await this.checkAndResetDailyCredits();
-  
-  if (this.isProUser()) {
-    return this.subscription.dailyCredits;
-  } else {
-    return this.credits;
-  }
+userSchema.methods.getRemainingAttacks = async function() {
+    // ✅ Pro users have unlimited attacks
+    if (this.isProUser()) {
+        // Check if subscription is active
+        if (this.subscription && this.subscription.expiresAt > new Date()) {
+            return Infinity;  // Unlimited!
+        }
+        // If expired, treat as free user
+    }
+    
+    // FREE USERS: remaining daily attacks or credits
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    if (!this.dailyAttacks || this.dailyAttacks.date < today) {
+        return Math.min(30, this.credits);
+    }
+    
+    const remainingDaily = Math.max(0, 30 - this.dailyAttacks.count);
+    const remainingCredits = this.credits;
+    
+    return Math.min(remainingDaily, remainingCredits);
 };
 
 // Get max attack duration
