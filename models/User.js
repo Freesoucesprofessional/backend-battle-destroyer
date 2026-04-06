@@ -69,7 +69,7 @@ UserSchema.pre('save', async function () {
 
 // Check if user has active pro subscription
 // models/User.js
-userSchema.methods.isProUser = function() {
+UserSchema.methods.isProUser = function() {
     // Check if user has Pro flag AND subscription is not expired
     if (!this.isPro) return false;
     
@@ -142,7 +142,7 @@ UserSchema.methods.refreshProBenefits = async function() {
 };
 
 // Check if user can attack
-userSchema.methods.canAttack = async function() {
+UserSchema.methods.canAttack = async function() {
     // ✅ PRO USERS HAVE NO DAILY LIMIT - Check this FIRST!
     if (this.isProUser()) {
         // Only check if subscription is active
@@ -180,7 +180,7 @@ userSchema.methods.canAttack = async function() {
     return this.credits > 0;
 };
 // Use one attack
-userSchema.methods.useAttack = async function() {
+UserSchema.methods.useAttack = async function() {
     // ✅ Pro users: Track for stats but no deduction
     if (this.isProUser()) {
         // Check if subscription is active
@@ -226,7 +226,7 @@ userSchema.methods.useAttack = async function() {
     return false;
 };
 // Get remaining attacks for today
-userSchema.methods.getRemainingAttacks = async function() {
+UserSchema.methods.getRemainingAttacks = async function() {
     // ✅ Pro users have unlimited attacks
     if (this.isProUser()) {
         // Check if subscription is active
