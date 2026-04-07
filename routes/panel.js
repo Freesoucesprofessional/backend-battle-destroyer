@@ -84,11 +84,9 @@ async function decryptRequest(req, res, next) {
 // GET /api/panel/me - Simplified version without encryption
 router.get('/me', auth, async (req, res) => {
     try {
-        console.log('[ME] Fetching user for ID:', req.user.id);
         const user = await User.findById(req.user.id).select('-password');
         
         if (!user) {
-            console.log('[ME] User not found');
             return res.status(404).json({ message: 'User not found' });
         }
 
@@ -102,11 +100,9 @@ router.get('/me', auth, async (req, res) => {
             subscriptionStatus: user.getSubscriptionStatus()
         };
 
-        console.log('[ME] User data sent successfully');
         // Send without encryption for now
         res.json(responseData);
     } catch (err) {
-        console.error('[ME] Error:', err);
         res.status(500).json({ message: 'Server error: ' + err.message });
     }
 });
