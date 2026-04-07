@@ -42,10 +42,10 @@ function createHash(data) {
 }
 
 function sendEncryptedError(res, statusCode, message) {
-    const errorResponse = { success: false, message };
-    const encryptedError = encryptResponse(errorResponse);
-    const errorHash = createHash(errorResponse);
-    res.status(statusCode).json({ encrypted: encryptedError, hash: errorHash });
+  const errorResponse = { success: false, message };
+  const encryptedError = encryptResponse(errorResponse);
+  const errorHash = createHash(errorResponse);
+  res.status(statusCode).json({ encrypted: encryptedError, hash: errorHash });
 }
 // ===== REDIS SESSION STORE =====
 const redis = require('redis');
@@ -129,43 +129,43 @@ async function adminAuth(req, res, next) {
  * Get all currently running attacks from both API and Panel endpoints
  */
 router.get('/attacks/running', adminAuth, async (req, res) => {
-    try {
-        const stats = attackTracker.getStats();
-        
-        // Add additional admin-specific info
-        const response = {
-            success: true,
-            timestamp: new Date().toISOString(),
-            data: {
-                totalActive: stats.totalActive,
-                bySource: stats.bySource,
-                attacks: stats.attacks.map(attack => ({
-                    attackId: attack.attackId,
-                    target: attack.target,
-                    port: attack.port,
-                    duration: attack.duration,
-                    startedAt: attack.startedAt,
-                    expiresAt: attack.expiresAt,
-                    timeRemaining: attack.timeRemaining,
-                    username: attack.username,
-                    userId: attack.userId,
-                    source: attack.source,
-                    status: attack.status
-                })),
-                totalAttacksLaunched: stats.totalAttacksLaunched,
-                lastUpdated: new Date().toISOString()
-            }
-        };
-        
-        // Encrypt response for consistency with other admin endpoints
-        const encryptedResponse = encryptResponse(response);
-        const responseHash = createHash(response);
-        res.json({ encrypted: encryptedResponse, hash: responseHash });
-        
-    } catch (error) {
-        console.error('[Admin] Error fetching running attacks:', error);
-        sendEncryptedError(res, 500, 'Failed to fetch running attacks');
-    }
+  try {
+    const stats = attackTracker.getStats();
+
+    // Add additional admin-specific info
+    const response = {
+      success: true,
+      timestamp: new Date().toISOString(),
+      data: {
+        totalActive: stats.totalActive,
+        bySource: stats.bySource,
+        attacks: stats.attacks.map(attack => ({
+          attackId: attack.attackId,
+          target: attack.target,
+          port: attack.port,
+          duration: attack.duration,
+          startedAt: attack.startedAt,
+          expiresAt: attack.expiresAt,
+          timeRemaining: attack.timeRemaining,
+          username: attack.username,
+          userId: attack.userId,
+          source: attack.source,
+          status: attack.status
+        })),
+        totalAttacksLaunched: stats.totalAttacksLaunched,
+        lastUpdated: new Date().toISOString()
+      }
+    };
+
+    // Encrypt response for consistency with other admin endpoints
+    const encryptedResponse = encryptResponse(response);
+    const responseHash = createHash(response);
+    res.json({ encrypted: encryptedResponse, hash: responseHash });
+
+  } catch (error) {
+    console.error('[Admin] Error fetching running attacks:', error);
+    sendEncryptedError(res, 500, 'Failed to fetch running attacks');
+  }
 });
 
 /**
@@ -173,41 +173,41 @@ router.get('/attacks/running', adminAuth, async (req, res) => {
  * Get lightweight summary of running attacks (good for dashboard widgets)
  */
 router.get('/attacks/running/summary', adminAuth, async (req, res) => {
-    try {
-        const attacks = attackTracker.getActiveAttacks();
-        const now = Date.now();
-        
-        const summary = {
-            success: true,
-            timestamp: new Date().toISOString(),
-            totalActive: attacks.length,
-            attacksBySource: {
-                api: attacks.filter(a => a.source === 'api').length,
-                panel: attacks.filter(a => a.source === 'panel').length
-            },
-            topTargets: attacks.slice(0, 5).map(a => ({
-                target: a.target,
-                port: a.port,
-                username: a.username,
-                timeRemaining: Math.max(0, Math.floor((a.expiresAt - now) / 1000))
-            })),
-            recentActivity: attacks.slice(-10).map(a => ({
-                target: a.target,
-                username: a.username,
-                source: a.source,
-                startedAt: a.startedAt,
-                expiresIn: Math.max(0, Math.floor((a.expiresAt - now) / 1000))
-            }))
-        };
-        
-        const encryptedResponse = encryptResponse(summary);
-        const responseHash = createHash(summary);
-        res.json({ encrypted: encryptedResponse, hash: responseHash });
-        
-    } catch (error) {
-        console.error('[Admin] Error fetching attacks summary:', error);
-        sendEncryptedError(res, 500, 'Failed to fetch attacks summary');
-    }
+  try {
+    const attacks = attackTracker.getActiveAttacks();
+    const now = Date.now();
+
+    const summary = {
+      success: true,
+      timestamp: new Date().toISOString(),
+      totalActive: attacks.length,
+      attacksBySource: {
+        api: attacks.filter(a => a.source === 'api').length,
+        panel: attacks.filter(a => a.source === 'panel').length
+      },
+      topTargets: attacks.slice(0, 5).map(a => ({
+        target: a.target,
+        port: a.port,
+        username: a.username,
+        timeRemaining: Math.max(0, Math.floor((a.expiresAt - now) / 1000))
+      })),
+      recentActivity: attacks.slice(-10).map(a => ({
+        target: a.target,
+        username: a.username,
+        source: a.source,
+        startedAt: a.startedAt,
+        expiresIn: Math.max(0, Math.floor((a.expiresAt - now) / 1000))
+      }))
+    };
+
+    const encryptedResponse = encryptResponse(summary);
+    const responseHash = createHash(summary);
+    res.json({ encrypted: encryptedResponse, hash: responseHash });
+
+  } catch (error) {
+    console.error('[Admin] Error fetching attacks summary:', error);
+    sendEncryptedError(res, 500, 'Failed to fetch attacks summary');
+  }
 });
 
 
@@ -216,40 +216,40 @@ router.get('/attacks/running/summary', adminAuth, async (req, res) => {
  * Get running attacks for a specific user
  */
 router.get('/attacks/user/:userId', adminAuth, async (req, res) => {
-    try {
-        const { userId } = req.params;
-        
-        if (!mongoose.Types.ObjectId.isValid(userId)) {
-            return res.status(400).json({ message: 'Invalid user ID format' });
-        }
-        
-        const attacks = attackTracker.getUserAttacks(userId);
-        const user = await User.findById(userId).select('username email').lean();
-        
-        const response = {
-            success: true,
-            user: user || { id: userId, username: 'Unknown', email: 'Unknown' },
-            activeAttacks: attacks.length,
-            attacks: attacks.map(a => ({
-                attackId: a.attackId,
-                target: a.target,
-                port: a.port,
-                duration: a.duration,
-                startedAt: a.startedAt,
-                expiresAt: a.expiresAt,
-                timeRemaining: Math.max(0, Math.floor((a.expiresAt - Date.now()) / 1000)),
-                source: a.source
-            }))
-        };
-        
-        const encryptedResponse = encryptResponse(response);
-        const responseHash = createHash(response);
-        res.json({ encrypted: encryptedResponse, hash: responseHash });
-        
-    } catch (error) {
-        console.error('[Admin] Error fetching user attacks:', error);
-        sendEncryptedError(res, 500, 'Failed to fetch user attacks');
+  try {
+    const { userId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ message: 'Invalid user ID format' });
     }
+
+    const attacks = attackTracker.getUserAttacks(userId);
+    const user = await User.findById(userId).select('username email').lean();
+
+    const response = {
+      success: true,
+      user: user || { id: userId, username: 'Unknown', email: 'Unknown' },
+      activeAttacks: attacks.length,
+      attacks: attacks.map(a => ({
+        attackId: a.attackId,
+        target: a.target,
+        port: a.port,
+        duration: a.duration,
+        startedAt: a.startedAt,
+        expiresAt: a.expiresAt,
+        timeRemaining: Math.max(0, Math.floor((a.expiresAt - Date.now()) / 1000)),
+        source: a.source
+      }))
+    };
+
+    const encryptedResponse = encryptResponse(response);
+    const responseHash = createHash(response);
+    res.json({ encrypted: encryptedResponse, hash: responseHash });
+
+  } catch (error) {
+    console.error('[Admin] Error fetching user attacks:', error);
+    sendEncryptedError(res, 500, 'Failed to fetch user attacks');
+  }
 });
 
 /**
@@ -257,43 +257,43 @@ router.get('/attacks/user/:userId', adminAuth, async (req, res) => {
  * Stop a specific running attack
  */
 router.delete('/attacks/:attackId', adminAuth, async (req, res) => {
-    try {
-        const { attackId } = req.params;
-        const stopped = attackTracker.stopAttack(attackId);
-        
-        if (stopped) {
-            await createAuditLog({
-                actorType: 'admin',
-                actorId: req.adminSession?.token,
-                action: 'STOP_ATTACK',
-                targetId: attackId,
-                targetType: 'attack',
-                changes: { attackId, stoppedBy: 'admin' },
-                ip: req.ip,
-                userAgent: req.headers['user-agent'],
-                success: true
-            });
-            
-            const response = {
-                success: true,
-                message: `Attack ${attackId} stopped successfully`
-            };
-            
-            const encryptedResponse = encryptResponse(response);
-            const responseHash = createHash(response);
-            res.json({ encrypted: encryptedResponse, hash: responseHash });
-            
-        } else {
-            res.status(404).json({ 
-                success: false, 
-                message: 'Attack not found or already completed' 
-            });
-        }
-        
-    } catch (error) {
-        console.error('[Admin] Error stopping attack:', error);
-        sendEncryptedError(res, 500, 'Failed to stop attack');
+  try {
+    const { attackId } = req.params;
+    const stopped = attackTracker.stopAttack(attackId);
+
+    if (stopped) {
+      await createAuditLog({
+        actorType: 'admin',
+        actorId: req.adminSession?.token,
+        action: 'STOP_ATTACK',
+        targetId: attackId,
+        targetType: 'attack',
+        changes: { attackId, stoppedBy: 'admin' },
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        success: true
+      });
+
+      const response = {
+        success: true,
+        message: `Attack ${attackId} stopped successfully`
+      };
+
+      const encryptedResponse = encryptResponse(response);
+      const responseHash = createHash(response);
+      res.json({ encrypted: encryptedResponse, hash: responseHash });
+
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'Attack not found or already completed'
+      });
     }
+
+  } catch (error) {
+    console.error('[Admin] Error stopping attack:', error);
+    sendEncryptedError(res, 500, 'Failed to stop attack');
+  }
 });
 
 /**
@@ -301,41 +301,41 @@ router.delete('/attacks/:attackId', adminAuth, async (req, res) => {
  * Stop all running attacks for a user
  */
 router.delete('/attacks/user/:userId/stop-all', adminAuth, async (req, res) => {
-    try {
-        const { userId } = req.params;
-        
-        if (!mongoose.Types.ObjectId.isValid(userId)) {
-            return res.status(400).json({ message: 'Invalid user ID format' });
-        }
-        
-        const stopped = attackTracker.stopUserAttacks(userId);
-        
-        await createAuditLog({
-            actorType: 'admin',
-            actorId: req.adminSession?.token,
-            action: 'STOP_ALL_USER_ATTACKS',
-            targetId: userId,
-            targetType: 'user',
-            changes: { userId, attacksStopped: stopped },
-            ip: req.ip,
-            userAgent: req.headers['user-agent'],
-            success: true
-        });
-        
-        const response = {
-            success: true,
-            message: `Stopped ${stopped} attacks for user`,
-            attacksStopped: stopped
-        };
-        
-        const encryptedResponse = encryptResponse(response);
-        const responseHash = createHash(response);
-        res.json({ encrypted: encryptedResponse, hash: responseHash });
-        
-    } catch (error) {
-        console.error('[Admin] Error stopping user attacks:', error);
-        sendEncryptedError(res, 500, 'Failed to stop user attacks');
+  try {
+    const { userId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ message: 'Invalid user ID format' });
     }
+
+    const stopped = attackTracker.stopUserAttacks(userId);
+
+    await createAuditLog({
+      actorType: 'admin',
+      actorId: req.adminSession?.token,
+      action: 'STOP_ALL_USER_ATTACKS',
+      targetId: userId,
+      targetType: 'user',
+      changes: { userId, attacksStopped: stopped },
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+      success: true
+    });
+
+    const response = {
+      success: true,
+      message: `Stopped ${stopped} attacks for user`,
+      attacksStopped: stopped
+    };
+
+    const encryptedResponse = encryptResponse(response);
+    const responseHash = createHash(response);
+    res.json({ encrypted: encryptedResponse, hash: responseHash });
+
+  } catch (error) {
+    console.error('[Admin] Error stopping user attacks:', error);
+    sendEncryptedError(res, 500, 'Failed to stop user attacks');
+  }
 });
 
 /**
@@ -343,42 +343,42 @@ router.delete('/attacks/user/:userId/stop-all', adminAuth, async (req, res) => {
  * Get attack statistics (historical)
  */
 router.get('/attacks/stats', adminAuth, async (req, res) => {
-    try {
-        const stats = attackTracker.getStats();
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        
-        // Get historical stats from database
-        const [totalAttacksAllTime, attacksToday] = await Promise.all([
-            AuditLog.countDocuments({ action: { $in: ['ATTACK_LAUNCHED', 'API_ATTACK_LAUNCHED'] }, success: true }),
-            AuditLog.countDocuments({ 
-                action: { $in: ['ATTACK_LAUNCHED', 'API_ATTACK_LAUNCHED'] }, 
-                success: true,
-                createdAt: { $gte: today }
-            })
-        ]);
-        
-        const response = {
-            success: true,
-            timestamp: new Date().toISOString(),
-            currentActive: stats.totalActive,
-            bySource: stats.bySource,
-            historical: {
-                totalAttacksAllTime,
-                attacksToday,
-                peakConcurrent: stats.totalAttacksLaunched // You can track peak separately if needed
-            },
-            totalLaunched: stats.totalAttacksLaunched
-        };
-        
-        const encryptedResponse = encryptResponse(response);
-        const responseHash = createHash(response);
-        res.json({ encrypted: encryptedResponse, hash: responseHash });
-        
-    } catch (error) {
-        console.error('[Admin] Error fetching attack stats:', error);
-        sendEncryptedError(res, 500, 'Failed to fetch attack statistics');
-    }
+  try {
+    const stats = attackTracker.getStats();
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // Get historical stats from database
+    const [totalAttacksAllTime, attacksToday] = await Promise.all([
+      AuditLog.countDocuments({ action: { $in: ['ATTACK_LAUNCHED', 'API_ATTACK_LAUNCHED'] }, success: true }),
+      AuditLog.countDocuments({
+        action: { $in: ['ATTACK_LAUNCHED', 'API_ATTACK_LAUNCHED'] },
+        success: true,
+        createdAt: { $gte: today }
+      })
+    ]);
+
+    const response = {
+      success: true,
+      timestamp: new Date().toISOString(),
+      currentActive: stats.totalActive,
+      bySource: stats.bySource,
+      historical: {
+        totalAttacksAllTime,
+        attacksToday,
+        peakConcurrent: stats.totalAttacksLaunched // You can track peak separately if needed
+      },
+      totalLaunched: stats.totalAttacksLaunched
+    };
+
+    const encryptedResponse = encryptResponse(response);
+    const responseHash = createHash(response);
+    res.json({ encrypted: encryptedResponse, hash: responseHash });
+
+  } catch (error) {
+    console.error('[Admin] Error fetching attack stats:', error);
+    sendEncryptedError(res, 500, 'Failed to fetch attack statistics');
+  }
 });
 
 router.post('/api-users/:id/extend', adminAuth, async (req, res) => {
@@ -392,7 +392,7 @@ router.post('/api-users/:id/extend', adminAuth, async (req, res) => {
     if (days === undefined || days === null) {
       return res.status(400).json({ message: 'Days parameter is required' });
     }
-    
+
     const daysNum = parseInt(days);
     if (isNaN(daysNum) || daysNum < 1 || daysNum > 365) {
       return res.status(400).json({ message: `Days must be between 1 and 365. Received: ${days}` });
@@ -405,7 +405,7 @@ router.post('/api-users/:id/extend', adminAuth, async (req, res) => {
 
     const oldExpiry = apiUser.expiresAt;
     const newExpiry = await apiUser.extendExpiration(daysNum);
-    
+
     await createAuditLog({
       actorType: 'admin',
       actorId: req.userId,
@@ -534,24 +534,24 @@ router.post('/api-users', adminAuth, async (req, res) => {
     if (!username) {
       return res.status(400).json({ message: 'Username is required' });
     }
-    
+
     username = username.trim().toLowerCase();
-    
+
     if (username.length < 3 || username.length > 30) {
       return res.status(400).json({ message: 'Username must be between 3 and 30 characters' });
     }
-    
+
     const validUsernameRegex = /^[a-zA-Z0-9_.-]+$/;
     if (!validUsernameRegex.test(username)) {
-      return res.status(400).json({ 
-        message: 'Username can only contain letters, numbers, underscores, dots, and hyphens' 
+      return res.status(400).json({
+        message: 'Username can only contain letters, numbers, underscores, dots, and hyphens'
       });
     }
-    
+
     if (!email) {
       return res.status(400).json({ message: 'Email is required' });
     }
-    
+
     email = email.trim().toLowerCase();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
@@ -565,7 +565,7 @@ router.post('/api-users', adminAuth, async (req, res) => {
     }
 
     let apiKey, apiSecret, apiSecretHash;
-    
+
     try {
       apiKey = await ApiUser.generateUniqueApiKey();
       const secretData = await ApiUser.generateUniqueApiSecret();
@@ -576,8 +576,8 @@ router.post('/api-users', adminAuth, async (req, res) => {
       return res.status(500).json({ message: 'Failed to generate unique credentials. Please try again.' });
     }
 
-    const expiresAt = expirationDays > 0 
-      ? new Date(Date.now() + expirationDays * 24 * 60 * 60 * 1000) 
+    const expiresAt = expirationDays > 0
+      ? new Date(Date.now() + expirationDays * 24 * 60 * 60 * 1000)
       : null;
 
     const apiUser = new ApiUser({
@@ -729,22 +729,22 @@ router.post('/api-users/:id/regenerate-secret', adminAuth, async (req, res) => {
     let attempts = 0;
     const maxAttempts = 5;
     let isUnique = false;
-    
+
     while (!isUnique && attempts < maxAttempts) {
       newSecretRaw = 'as_' + crypto.randomBytes(32).toString('hex');
       newSecretHash = crypto.createHash('sha256').update(newSecretRaw).digest('hex');
-      
+
       const existing = await ApiUser.findOne({ apiSecretHash: newSecretHash });
       if (!existing) {
         isUnique = true;
       }
       attempts++;
     }
-    
+
     if (!isUnique) {
       return res.status(500).json({ message: 'Failed to generate unique secret. Please try again.' });
     }
-    
+
     apiUser.apiSecretHash = newSecretHash;
     await apiUser.save();
 
@@ -847,7 +847,7 @@ router.get('/api-users/:id/stats', adminAuth, async (req, res) => {
       const lastMinute = apiUser.requestHistory?.filter(r => now - new Date(r.timestamp) < 60 * 1000).length || 0;
       const lastHour = apiUser.requestHistory?.filter(r => now - new Date(r.timestamp) < 60 * 60 * 1000).length || 0;
       const lastDay = apiUser.requestHistory?.filter(r => now - new Date(r.timestamp) < 24 * 60 * 60 * 1000).length || 0;
-      
+
       statsResponse.currentRateLimits = {
         lastMinute,
         lastHour,
@@ -1104,41 +1104,41 @@ router.get('/stats', adminAuth, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 router.get('/stats', adminAuth, async (req, res) => {
-    try {
-        const [total, proUsers, freeUsers, withCredits, today, totalResellers, activeResellers] =
-            await Promise.all([
-                User.countDocuments(),
-                User.countDocuments({
-                    'subscription.type': 'pro',
-                    'subscription.expiresAt': { $gt: new Date() }
-                }),
-                User.countDocuments({ 'subscription.type': 'free' }),
-                User.countDocuments({ credits: { $gt: 0 } }),
-                User.countDocuments({ createdAt: { $gte: new Date(Date.now() - 86400000) } }),
-                Reseller.countDocuments(),
-                Reseller.countDocuments({ isBlocked: false })
-            ]);
+  try {
+    const [total, proUsers, freeUsers, withCredits, today, totalResellers, activeResellers] =
+      await Promise.all([
+        User.countDocuments(),
+        User.countDocuments({
+          'subscription.type': 'pro',
+          'subscription.expiresAt': { $gt: new Date() }
+        }),
+        User.countDocuments({ 'subscription.type': 'free' }),
+        User.countDocuments({ credits: { $gt: 0 } }),
+        User.countDocuments({ createdAt: { $gte: new Date(Date.now() - 86400000) } }),
+        Reseller.countDocuments(),
+        Reseller.countDocuments({ isBlocked: false })
+      ]);
 
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-        const attacksToday = await User.aggregate([
-            { $match: { 'dailyAttacks.date': { $gte: todayStart } } },
-            { $group: { _id: null, total: { $sum: '$dailyAttacks.count' } } }
-        ]);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const attacksToday = await User.aggregate([
+      { $match: { 'dailyAttacks.date': { $gte: todayStart } } },
+      { $group: { _id: null, total: { $sum: '$dailyAttacks.count' } } }
+    ]);
 
-        const statsData = {
-            total, pro: proUsers, free: freeUsers,
-            withCredits, today, totalResellers, activeResellers,
-            attacksToday: attacksToday[0]?.total || 0
-        };
-        
-        const encryptedResponse = encryptResponse(statsData);
-        const responseHash = createHash(statsData);
-        res.json({ encrypted: encryptedResponse, hash: responseHash });
-    } catch (err) {
-        console.error('❌ Stats error:', err);
-        sendEncryptedError(res, 500, 'Failed to fetch stats');
-    }
+    const statsData = {
+      total, pro: proUsers, free: freeUsers,
+      withCredits, today, totalResellers, activeResellers,
+      attacksToday: attacksToday[0]?.total || 0
+    };
+
+    const encryptedResponse = encryptResponse(statsData);
+    const responseHash = createHash(statsData);
+    res.json({ encrypted: encryptedResponse, hash: responseHash });
+  } catch (err) {
+    console.error('❌ Stats error:', err);
+    sendEncryptedError(res, 500, 'Failed to fetch stats');
+  }
 });
 // ═══════════════════════════════════════════════════════════════════════════════
 //  USER ROUTES
@@ -1303,7 +1303,7 @@ router.patch('/users/:id', adminAuth, async (req, res) => {
 
     const allowed = ['credits', 'username', 'email'];
     const sanitized = {};
-    
+
     for (const key of allowed) {
       if (req.body[key] !== undefined) sanitized[key] = req.body[key];
     }
@@ -1371,7 +1371,7 @@ router.post('/users/:id/give-pro', adminAuth, async (req, res) => {
     }
 
     const { planType, customDays } = req.body;
-    
+
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
@@ -1385,8 +1385,8 @@ router.post('/users/:id/give-pro', adminAuth, async (req, res) => {
       const planDays = { week: 7, month: 30, season: 60 };
       days = planDays[planType];
       if (!days) {
-        return res.status(400).json({ 
-          message: 'Invalid plan type', 
+        return res.status(400).json({
+          message: 'Invalid plan type',
           validPlans: ['week', 'month', 'season', 'custom']
         });
       }
@@ -1404,10 +1404,10 @@ router.post('/users/:id/give-pro', adminAuth, async (req, res) => {
     } : null;
 
     user.addProSubscription(plan, days);
-    
+
     // Add 30 credits to the user
     user.credits = (user.credits || 0) + 30;
-    
+
     await user.save();
 
     await createAuditLog({
@@ -1415,8 +1415,8 @@ router.post('/users/:id/give-pro', adminAuth, async (req, res) => {
       action: 'GIVE_PRO_SUBSCRIPTION',
       targetId: user._id,
       targetType: 'user',
-      changes: { 
-        plan, 
+      changes: {
+        plan,
         days,
         bonusCreditsGiven: 30,
         userCreditsAfter: user.credits,
@@ -1430,11 +1430,11 @@ router.post('/users/:id/give-pro', adminAuth, async (req, res) => {
 
     res.json({
       message: `✅ Pro subscription added successfully for ${days} days with 30 bonus credits!`,
-      user: { 
-        id: user._id, 
-        username: user.username, 
-        isPro: user.isProUser(), 
-        expiresAt: user.subscription.expiresAt, 
+      user: {
+        id: user._id,
+        username: user.username,
+        isPro: user.isProUser(),
+        expiresAt: user.subscription.expiresAt,
         daysLeft: user.getSubscriptionStatus().daysLeft,
         credits: user.credits
       }
@@ -1487,23 +1487,23 @@ router.post('/users/:id/extend-pro', adminAuth, async (req, res) => {
 
     // 🔐 DECRYPT THE REQUEST BODY FIRST
     let requestData = req.body;
-    
+
     if (req.body.encrypted && req.body.hash) {
       try {
         const decryptedBytes = CryptoJS.AES.decrypt(req.body.encrypted, ENCRYPTION_KEY);
         const decryptedString = decryptedBytes.toString(CryptoJS.enc.Utf8);
-        
+
         if (!decryptedString) {
           throw new Error('Decryption failed');
         }
-        
+
         requestData = JSON.parse(decryptedString);
-        
+
         const calculatedHash = createHash(requestData);
         if (calculatedHash !== req.body.hash) {
           return res.status(400).json({ message: 'Request integrity check failed' });
         }
-        
+
         if (requestData.timestamp) {
           delete requestData.timestamp;
         }
@@ -1528,10 +1528,10 @@ router.post('/users/:id/extend-pro', adminAuth, async (req, res) => {
       const planDays = { week: 7, month: 30, season: 60 };
       days = planDays[planType];
       if (!days) {
-        return res.status(400).json({ 
-          message: 'Invalid plan type', 
+        return res.status(400).json({
+          message: 'Invalid plan type',
           validPlans: ['week', 'month', 'season', 'custom'],
-          received: planType 
+          received: planType
         });
       }
     }
@@ -1546,7 +1546,7 @@ router.post('/users/:id/extend-pro', adminAuth, async (req, res) => {
     } else {
       user.subscription.expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
     }
-    
+
     user.subscription.type = 'pro';
     user.subscription.plan = plan;
     await user.save();
@@ -1562,14 +1562,14 @@ router.post('/users/:id/extend-pro', adminAuth, async (req, res) => {
       success: true
     });
 
-    res.json({ 
-      message: `Pro subscription extended by ${days} days`, 
-      user: { 
-        id: user._id, 
-        username: user.username, 
-        expiresAt: user.subscription.expiresAt, 
-        daysLeft: user.getSubscriptionStatus().daysLeft 
-      } 
+    res.json({
+      message: `Pro subscription extended by ${days} days`,
+      user: {
+        id: user._id,
+        username: user.username,
+        expiresAt: user.subscription.expiresAt,
+        daysLeft: user.getSubscriptionStatus().daysLeft
+      }
     });
   } catch (err) {
     console.error('❌ Extend pro error:', err);
@@ -1585,25 +1585,25 @@ router.post('/users/:id/replace-pro', adminAuth, async (req, res) => {
 
     // 🔐 DECRYPT THE REQUEST BODY FIRST
     let requestData = req.body;
-    
+
     // Check if the request is encrypted
     if (req.body.encrypted && req.body.hash) {
       try {
         const decryptedBytes = CryptoJS.AES.decrypt(req.body.encrypted, ENCRYPTION_KEY);
         const decryptedString = decryptedBytes.toString(CryptoJS.enc.Utf8);
-        
+
         if (!decryptedString) {
           throw new Error('Decryption failed');
         }
-        
+
         requestData = JSON.parse(decryptedString);
-        
+
         // Verify hash
         const calculatedHash = createHash(requestData);
         if (calculatedHash !== req.body.hash) {
           return res.status(400).json({ message: 'Request integrity check failed' });
         }
-        
+
         // Remove timestamp if present
         if (requestData.timestamp) {
           delete requestData.timestamp;
@@ -1616,11 +1616,11 @@ router.post('/users/:id/replace-pro', adminAuth, async (req, res) => {
 
     // Now use requestData instead of req.body
     const { planType, customDays } = requestData;
-    
+
     // Debug logging
     console.log('📥 Replace Pro - Received planType:', planType);
     console.log('📥 Replace Pro - Received customDays:', customDays);
-    
+
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
@@ -1635,10 +1635,10 @@ router.post('/users/:id/replace-pro', adminAuth, async (req, res) => {
       const planDays = { week: 7, month: 30, season: 60 };
       days = planDays[planType];
       if (!days) {
-        return res.status(400).json({ 
-          message: 'Invalid plan type', 
+        return res.status(400).json({
+          message: 'Invalid plan type',
           validPlans: ['week', 'month', 'season', 'custom'],
-          received: planType 
+          received: planType
         });
       }
     }
@@ -1647,11 +1647,11 @@ router.post('/users/:id/replace-pro', adminAuth, async (req, res) => {
       return res.status(400).json({ message: 'Days must be between 1 and 365', provided: days });
     }
 
-    const oldSubscription = user.subscription ? { 
-      type: user.subscription.type, 
-      plan: user.subscription.plan, 
-      expiresAt: user.subscription.expiresAt, 
-      dailyCredits: user.subscription.dailyCredits 
+    const oldSubscription = user.subscription ? {
+      type: user.subscription.type,
+      plan: user.subscription.plan,
+      expiresAt: user.subscription.expiresAt,
+      dailyCredits: user.subscription.dailyCredits
     } : null;
     const oldExpiry = user.subscription?.expiresAt;
 
@@ -1661,7 +1661,7 @@ router.post('/users/:id/replace-pro', adminAuth, async (req, res) => {
     user.subscription.expiresAt = null;
     user.subscription.dailyCredits = 10;
     user.subscription.lastCreditReset = new Date();
-    
+
     // Add new pro subscription
     user.addProSubscription(plan, days);
     await user.save();
@@ -1671,40 +1671,40 @@ router.post('/users/:id/replace-pro', adminAuth, async (req, res) => {
       action: 'REPLACE_PRO_SUBSCRIPTION',
       targetId: user._id,
       targetType: 'user',
-      changes: { 
-        oldSubscription, 
-        newSubscription: { 
-          type: user.subscription.type, 
-          plan: user.subscription.plan, 
-          expiresAt: user.subscription.expiresAt, 
-          dailyCredits: user.subscription.dailyCredits 
-        }, 
-        days, 
-        plan, 
-        oldExpiry, 
-        newExpiry: user.subscription.expiresAt 
+      changes: {
+        oldSubscription,
+        newSubscription: {
+          type: user.subscription.type,
+          plan: user.subscription.plan,
+          expiresAt: user.subscription.expiresAt,
+          dailyCredits: user.subscription.dailyCredits
+        },
+        days,
+        plan,
+        oldExpiry,
+        newExpiry: user.subscription.expiresAt
       },
       ip: req.ip,
       userAgent: req.headers['user-agent'],
       success: true
     });
 
-    res.json({ 
-      message: `Pro subscription replaced with ${days} days plan`, 
-      user: { 
-        id: user._id, 
-        username: user.username, 
-        email: user.email, 
-        isPro: user.isProUser(), 
-        subscription: { 
-          type: user.subscription.type, 
-          plan: user.subscription.plan, 
-          expiresAt: user.subscription.expiresAt, 
-          dailyCredits: user.subscription.dailyCredits 
-        }, 
-        expiresAt: user.subscription.expiresAt, 
-        daysLeft: user.getSubscriptionStatus().daysLeft 
-      } 
+    res.json({
+      message: `Pro subscription replaced with ${days} days plan`,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        isPro: user.isProUser(),
+        subscription: {
+          type: user.subscription.type,
+          plan: user.subscription.plan,
+          expiresAt: user.subscription.expiresAt,
+          dailyCredits: user.subscription.dailyCredits
+        },
+        expiresAt: user.subscription.expiresAt,
+        daysLeft: user.getSubscriptionStatus().daysLeft
+      }
     });
   } catch (err) {
     console.error('❌ Replace pro error:', err);
@@ -1895,12 +1895,12 @@ router.post('/resellers', adminAuth, async (req, res) => {
       success: true
     });
 
-    res.status(201).json({ 
-      id: reseller._id, 
-      username: reseller.username, 
-      email: reseller.email, 
-      credits: reseller.credits, 
-      isBlocked: reseller.isBlocked 
+    res.status(201).json({
+      id: reseller._id,
+      username: reseller.username,
+      email: reseller.email,
+      credits: reseller.credits,
+      isBlocked: reseller.isBlocked
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -1919,7 +1919,7 @@ router.patch('/resellers/:id', adminAuth, async (req, res) => {
 
     const { credits, isBlocked, username, email, password } = req.body;
     const updateData = {};
-    
+
     if (credits !== undefined) updateData.credits = credits;
     if (isBlocked !== undefined) updateData.isBlocked = isBlocked;
     if (username) updateData.username = username;
@@ -1928,7 +1928,7 @@ router.patch('/resellers/:id', adminAuth, async (req, res) => {
 
     const reseller = await Reseller.findByIdAndUpdate(req.params.id, updateData, { new: true })
       .select('-password').lean();
-    
+
     if (!reseller) return res.status(404).json({ message: 'Reseller not found' });
 
     await createAuditLog({

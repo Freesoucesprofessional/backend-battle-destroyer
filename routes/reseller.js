@@ -574,7 +574,7 @@ router.post('/give-pro', resellerAuth, actionLimiter, async (req, res) => {
       // EXTEND existing subscription
       const currentExpiry = new Date(user.subscription.expiresAt);
       newExpiry = new Date(currentExpiry.getTime() + plan.days * 24 * 60 * 60 * 1000);
-      
+
       user.subscription.expiresAt = newExpiry;
       user.subscription.plan = plan.label.toLowerCase();
       // Keep existing daily credits (don't reset, just extend)
@@ -590,11 +590,11 @@ router.post('/give-pro', resellerAuth, actionLimiter, async (req, res) => {
     }
 
     user.isPro = true;
-    
+
     // ✅ Reset daily credits to 30 when upgrading to Pro (or extending)
     user.subscription.dailyCredits = 30;
     user.subscription.lastCreditReset = now;
-    
+
     // ✅ Reset today's attack count so user can use their new Pro benefits immediately
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -602,7 +602,7 @@ router.post('/give-pro', resellerAuth, actionLimiter, async (req, res) => {
       count: 0,
       date: today
     };
-    
+
     await user.save();
 
     // Deduct credits from reseller
@@ -614,7 +614,7 @@ router.post('/give-pro', resellerAuth, actionLimiter, async (req, res) => {
     // Get updated subscription status
     const isProActive = user.subscription?.type === 'pro' && user.subscription?.expiresAt > new Date();
     const daysLeft = Math.ceil((new Date(user.subscription.expiresAt) - new Date()) / (1000 * 60 * 60 * 24));
-    
+
     const subscriptionStatus = isProActive && user.subscription ? {
       plan: user.subscription.plan,
       daysLeft: daysLeft,
