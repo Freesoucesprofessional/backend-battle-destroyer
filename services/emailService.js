@@ -1,5 +1,5 @@
 // services/emailService.js
-const SibApiV3Sdk = require('brevo');
+const SibApiV3Sdk = require('@getbrevo/brevo');
 
 // Initialize Brevo
 let apiInstance = null;
@@ -37,7 +37,6 @@ async function sendOTPEmail(email, otp, username = '') {
   sendSmtpEmail.subject = 'Verify Your Battle Destroyer Account';
   sendSmtpEmail.to = [{ email: email, name: username || email.split('@')[0] }];
   sendSmtpEmail.sender = { email: senderEmail, name: senderName };
-  
   sendSmtpEmail.htmlContent = `
     <!DOCTYPE html>
     <html>
@@ -107,7 +106,6 @@ async function sendWelcomeEmail(email, username) {
   sendSmtpEmail.subject = 'Welcome to Battle Destroyer! 🎮';
   sendSmtpEmail.to = [{ email: email, name: username }];
   sendSmtpEmail.sender = { email: senderEmail, name: senderName };
-  
   sendSmtpEmail.htmlContent = `
     <!DOCTYPE html>
     <html>
