@@ -1,14 +1,18 @@
 // services/emailService.js
-const brevo = require('@getbrevo/brevo');
+const SibApiV3Sdk = require('brevo');
 
-// Initialize Brevo
+// Initialize Brevo with correct pattern for 'brevo' npm package
 let apiInstance = null;
 let apiKeyConfigured = false;
 
 try {
   if (process.env.BREVO_API_KEY) {
-    apiInstance = new brevo.TransactionalEmailsApi();
-    apiInstance.setApiKey(brevo.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
+    // ✅ Correct initialization for the 'brevo' npm package
+    let defaultClient = SibApiV3Sdk.ApiClient.instance;
+    let apiKey = defaultClient.authentications['api-key'];
+    apiKey.apiKey = process.env.BREVO_API_KEY;
+
+    apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
     apiKeyConfigured = true;
     console.log('[Email] Brevo initialized successfully');
   } else {
@@ -25,142 +29,143 @@ function generateOTP() {
 
 // Send OTP email using Brevo
 async function sendOTPEmail(email, otp, username = '') {
-  if (!apiKeyConfigured) {
-    console.error('[Email] Brevo not configured, cannot send email');
+  if (!apiKeyConfigured || !apiInstance) {
+    console.error('[Email] Brevo not configured, cannot send OTP email');
     return false;
   }
 
-  const senderEmail = process.env.EMAIL_FROM || process.env.BREVO_SENDER_EMAIL || 'noreply@battle-destroyer.railway.app';
-  const senderName = process.env.EMAIL_FROM_NAME || 'Battle Destroyer';
-
-  const sendSmtpEmail = new brevo.SendSmtpEmail();
-  sendSmtpEmail.subject = 'Verify Your Battle Destroyer Account';
-  sendSmtpEmail.to = [{ email: email, name: username || email.split('@')[0] }];
-  sendSmtpEmail.sender = { email: senderEmail, name: senderName };
-  sendSmtpEmail.htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Verify Your Account</title>
-      <style>
-        body { font-family: 'Arial', sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
-        .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-        .header { background: linear-gradient(135deg, #ef4444, #dc2626); padding: 30px; text-align: center; }
-        .header h1 { color: white; margin: 0; font-size: 28px; letter-spacing: 2px; }
-        .content { padding: 40px 30px; text-align: center; }
-        .otp-code { background: #f8f9fa; padding: 20px; font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #dc2626; border-radius: 8px; margin: 20px 0; font-family: monospace; }
-        .warning { color: #666; font-size: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; }
-        .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #666; font-size: 12px; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>BATTLE DESTROYER</h1>
-        </div>
-        <div class="content">
-          <h2>Verify Your Email Address</h2>
-          ${username ? `<p>Hello <strong>${username}</strong>,</p>` : '<p>Hello,</p>'}
-          <p>Thanks for signing up! Please use the following verification code to complete your registration:</p>
-          <div class="otp-code">${otp}</div>
-          <p>This code will expire in <strong>10 minutes</strong>.</p>
-          <p>If you didn't request this, please ignore this email.</p>
-          <div class="warning">
-            <strong>⚠️ Security Notice</strong><br>
-            Never share this code with anyone. Battle Destroyer will never ask for this code outside the registration process.
-          </div>
-        </div>
-        <div class="footer">
-          <p>Battle Destroyer - Attack with Honor</p>
-          <p>&copy; ${new Date().getFullYear()} Battle Destroyer. All rights reserved.</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
+  const senderEmail = process.env.EMAIL_FROM || process.env.BREVO_SENDER_EMAIL || 'hsbgmi200@gmail.com';
+  const senderName  = process.env.EMAIL_FROM_NAME || 'Battle Destroyer';
 
   try {
+    const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+
+    sendSmtpEmail.subject = 'Verify Your Battle Destroyer Account';
+    sendSmtpEmail.sender  = { email: senderEmail, name: senderName };
+    sendSmtpEmail.to      = [{ email: email, name: username || email.split('@')[0] }];
+
+    sendSmtpEmail.htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Verify Your Account</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
+          .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+          .header { background: linear-gradient(135deg, #ef4444, #dc2626); padding: 30px; text-align: center; }
+          .header h1 { color: white; margin: 0; font-size: 28px; letter-spacing: 2px; }
+          .content { padding: 40px 30px; text-align: center; }
+          .otp-code { background: #f8f9fa; padding: 20px; font-size: 42px; font-weight: bold; letter-spacing: 12px; color: #dc2626; border-radius: 8px; margin: 24px 0; font-family: monospace; border: 2px dashed #dc2626; }
+          .expire-note { color: #888; font-size: 14px; margin: 10px 0 20px; }
+          .warning { color: #666; font-size: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; }
+          .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>⚔️ BATTLE DESTROYER</h1>
+          </div>
+          <div class="content">
+            <h2>Verify Your Email Address</h2>
+            ${username ? `<p>Hello <strong>${username}</strong>,</p>` : '<p>Hello,</p>'}
+            <p>Thanks for signing up! Use the code below to complete your registration:</p>
+            <div class="otp-code">${otp}</div>
+            <p class="expire-note">⏳ This code expires in <strong>10 minutes</strong>.</p>
+            <p>If you didn't create an account, you can safely ignore this email.</p>
+            <div class="warning">
+              <strong>⚠️ Security Notice</strong><br>
+              Never share this code with anyone. Battle Destroyer will never ask for this code outside the registration process.
+            </div>
+          </div>
+          <div class="footer">
+            <p>Battle Destroyer — Attack with Honor</p>
+            <p>&copy; ${new Date().getFullYear()} Battle Destroyer. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
     const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log(`[Email] OTP sent to ${email}, MessageId: ${data.messageId}`);
+    console.log(`[Email] ✅ OTP sent to ${email} | MessageId: ${data.messageId}`);
     return true;
   } catch (error) {
-    console.error('[Email] Send failed:', error.response?.body?.message || error.message);
+    const errMsg = error.response?.body?.message || error.message || 'Unknown error';
+    console.error(`[Email] ❌ OTP send failed to ${email}: ${errMsg}`);
     return false;
   }
 }
 
 // Send welcome email using Brevo
 async function sendWelcomeEmail(email, username) {
-  if (!apiKeyConfigured) {
+  if (!apiKeyConfigured || !apiInstance) {
     console.error('[Email] Brevo not configured, cannot send welcome email');
     return false;
   }
 
-  const senderEmail = process.env.EMAIL_FROM || process.env.BREVO_SENDER_EMAIL || 'noreply@battle-destroyer.railway.app';
-  const senderName = process.env.EMAIL_FROM_NAME || 'Battle Destroyer';
-  const frontendUrl = process.env.FRONTEND_URL || 'https://your-app.railway.app';
-
-  const sendSmtpEmail = new brevo.SendSmtpEmail();
-  sendSmtpEmail.subject = 'Welcome to Battle Destroyer! 🎮';
-  sendSmtpEmail.to = [{ email: email, name: username }];
-  sendSmtpEmail.sender = { email: senderEmail, name: senderName };
-  sendSmtpEmail.htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Welcome to Battle Destroyer</title>
-      <style>
-        body { font-family: 'Arial', sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
-        .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-        .header { background: linear-gradient(135deg, #ef4444, #dc2626); padding: 30px; text-align: center; }
-        .header h1 { color: white; margin: 0; font-size: 28px; letter-spacing: 2px; }
-        .content { padding: 40px 30px; text-align: center; }
-        .button { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; padding: 12px 30px; text-decoration: none; border-radius: 8px; display: inline-block; margin: 20px 0; font-weight: bold; }
-        .features { text-align: left; margin: 30px 0; padding: 0 20px; }
-        .feature { margin: 15px 0; padding: 10px; background: #f8f9fa; border-radius: 8px; }
-        .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #666; font-size: 12px; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>BATTLE DESTROYER</h1>
-        </div>
-        <div class="content">
-          <h2>Welcome, ${username}! 🎉</h2>
-          <p>Your account has been successfully verified and created!</p>
-          <div class="features">
-            <div class="feature">
-              <strong>✨ Referral Bonus</strong> - You received credits from your referral!
-            </div>
-            <div class="feature">
-              <strong>🔗 Referral System</strong> - Share your code and earn +2 credits per referral
-            </div>
-            <div class="feature">
-              <strong>🛡️ Device Protection</strong> - Your account is secured
-            </div>
-          </div>
-          <a href="${frontendUrl}/dashboard" class="button">Start Attacking →</a>
-          <p>Ready to dominate the battlefield?</p>
-        </div>
-        <div class="footer">
-          <p>Battle Destroyer - Attack with Honor</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
+  const senderEmail  = process.env.EMAIL_FROM || process.env.BREVO_SENDER_EMAIL || 'hsbgmi200@gmail.com';
+  const senderName   = process.env.EMAIL_FROM_NAME || 'Battle Destroyer';
+  const frontendUrl  = process.env.FRONTEND_URL || 'https://battle-destroyer.shop';
 
   try {
+    const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+
+    sendSmtpEmail.subject = '🎮 Welcome to Battle Destroyer!';
+    sendSmtpEmail.sender  = { email: senderEmail, name: senderName };
+    sendSmtpEmail.to      = [{ email: email, name: username }];
+
+    sendSmtpEmail.htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Welcome to Battle Destroyer</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
+          .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+          .header { background: linear-gradient(135deg, #ef4444, #dc2626); padding: 30px; text-align: center; }
+          .header h1 { color: white; margin: 0; font-size: 28px; letter-spacing: 2px; }
+          .content { padding: 40px 30px; text-align: center; }
+          .button { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; padding: 14px 34px; text-decoration: none; border-radius: 8px; display: inline-block; margin: 20px 0; font-weight: bold; font-size: 16px; }
+          .features { text-align: left; margin: 24px 0; }
+          .feature { margin: 12px 0; padding: 12px 16px; background: #f8f9fa; border-radius: 8px; font-size: 14px; }
+          .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #999; font-size: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>⚔️ BATTLE DESTROYER</h1>
+          </div>
+          <div class="content">
+            <h2>Welcome, ${username}! 🎉</h2>
+            <p>Your account has been successfully verified and is ready to use.</p>
+            <div class="features">
+              <div class="feature">🔗 <strong>Referral System</strong> — Share your code and earn +2 credits per referral</div>
+              <div class="feature">🛡️ <strong>Device Protection</strong> — Your account is secured with fingerprint protection</div>
+              <div class="feature">⚡ <strong>Attack Hub</strong> — Launch attacks directly from your dashboard</div>
+            </div>
+            <a href="${frontendUrl}/dashboard" class="button">Go to Dashboard →</a>
+          </div>
+          <div class="footer">
+            <p>Battle Destroyer — Attack with Honor</p>
+            <p>&copy; ${new Date().getFullYear()} Battle Destroyer. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
     const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log(`[Email] Welcome email sent to ${email}, MessageId: ${data.messageId}`);
+    console.log(`[Email] ✅ Welcome email sent to ${email} | MessageId: ${data.messageId}`);
     return true;
   } catch (error) {
-    console.error('[Email] Welcome email failed:', error.response?.body?.message || error.message);
+    const errMsg = error.response?.body?.message || error.message || 'Unknown error';
+    console.error(`[Email] ❌ Welcome email failed to ${email}: ${errMsg}`);
     return false;
   }
 }
