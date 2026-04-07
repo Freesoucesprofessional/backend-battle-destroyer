@@ -1,67 +1,45 @@
 // services/emailService.js
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
-// Create transporter using Gmail SMTP
-let transporter = null;
-let transporterReady = false;
+let resend = null;
+let emailReady = false;
 
 try {
-    if (process.env.EMAIL_USER && process.env.EMAIL_APP_PASSWORD) {
-        transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: 465,
-            secure: true,
-            family: 4,          // ← Force IPv4, fixes ENETUNREACH on Railway
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_APP_PASSWORD,
-            },
-            tls: {
-                rejectUnauthorized: false,
-            },
-            connectionTimeout: 10000,
-            greetingTimeout: 10000,
-            socketTimeout: 15000,
-        });
-        transporterReady = true;
-        // Add this after transporterReady = true;
-        transporter.verify((error, success) => {
-            if (error) {
-                console.error('[Email] SMTP connection test FAILED:', error.message);
-                transporterReady = false;
-            } else {
-                console.log('[Email] SMTP connection test PASSED - ready to send');
-            }
-        });
-        console.log('[Email] Nodemailer/Gmail initialized successfully');
-    } else {
-        console.warn('[Email] EMAIL_USER or EMAIL_APP_PASSWORD not found in environment variables');
-    }
+  if (process.env.RESEND_API_KEY) {
+    resend = new Resend(process.env.RESEND_API_KEY);
+    emailReady = true;
+    console.log('[Email] Resend initialized successfully');
+  } else {
+    console.warn('[Email] RESEND_API_KEY not found in environment variables');
+  }
 } catch (error) {
-    console.error('[Email] Nodemailer init failed:', error.message);
+  console.error('[Email] Resend init failed:', error.message);
 }
+
+// The "from" address — must be a verified domain in Resend dashboard
+// During testing you can use: onboarding@resend.dev (only sends to your own email)
+// For production: use your own domain e.g. noreply@battle-destroyer.shop
+const FROM_ADDRESS = process.env.EMAIL_FROM
+  || `Battle Destroyer <noreply@battle-destroyer.shop>`;
 
 // Generate 6-digit OTP
 function generateOTP() {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+  return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
 // Send OTP email
 async function sendOTPEmail(email, otp, username = '') {
-    if (!transporterReady || !transporter) {
-        console.error('[Email] Nodemailer not configured, cannot send OTP email');
-        return false;
-    }
+  if (!emailReady || !resend) {
+    console.error('[Email] Resend not configured, cannot send OTP email');
+    return false;
+  }
 
-    const senderEmail = process.env.EMAIL_USER;
-    const senderName = process.env.EMAIL_FROM_NAME || 'Battle Destroyer';
-
-    try {
-        const info = await transporter.sendMail({
-            from: `"${senderName}" <${senderEmail}>`,
-            to: email,
-            subject: 'Verify Your Battle Destroyer Account',
-            html: `
+  try {
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS,
+      to: [email],
+      subject: 'Verify Your Battle Destroyer Account',
+      html: `
         <!DOCTYPE html>
         <html>
         <head>
@@ -105,33 +83,36 @@ async function sendOTPEmail(email, otp, username = '') {
         </body>
         </html>
       `,
-        });
+    });
 
-        console.log(`[Email] OTP sent to ${email} | MessageId: ${info.messageId}`);
-        return true;
-    } catch (error) {
-        console.error(`[Email] OTP send failed to ${email}: ${error.message}`);
-        return false;
+    if (error) {
+      console.error(`[Email] OTP send failed to ${email}:`, error.message || JSON.stringify(error));
+      return false;
     }
+
+    console.log(`[Email] OTP sent to ${email} | ID: ${data.id}`);
+    return true;
+  } catch (error) {
+    console.error(`[Email] OTP send exception to ${email}: ${error.message}`);
+    return false;
+  }
 }
 
 // Send welcome email
 async function sendWelcomeEmail(email, username) {
-    if (!transporterReady || !transporter) {
-        console.error('[Email] Nodemailer not configured, cannot send welcome email');
-        return false;
-    }
+  if (!emailReady || !resend) {
+    console.error('[Email] Resend not configured, cannot send welcome email');
+    return false;
+  }
 
-    const senderEmail = process.env.EMAIL_USER;
-    const senderName = process.env.EMAIL_FROM_NAME || 'Battle Destroyer';
-    const frontendUrl = process.env.FRONTEND_URL || 'https://battle-destroyer.shop';
+  const frontendUrl = process.env.FRONTEND_URL || 'https://battle-destroyer.shop';
 
-    try {
-        const info = await transporter.sendMail({
-            from: `"${senderName}" <${senderEmail}>`,
-            to: email,
-            subject: 'Welcome to Battle Destroyer!',
-            html: `
+  try {
+    const { data, error } = await resend.emails.send({
+      from: FROM_ADDRESS,
+      to: [email],
+      subject: 'Welcome to Battle Destroyer!',
+      html: `
         <!DOCTYPE html>
         <html>
         <head>
@@ -173,14 +154,19 @@ async function sendWelcomeEmail(email, username) {
         </body>
         </html>
       `,
-        });
+    });
 
-        console.log(`[Email] Welcome email sent to ${email} | MessageId: ${info.messageId}`);
-        return true;
-    } catch (error) {
-        console.error(`[Email] Welcome email failed to ${email}: ${error.message}`);
-        return false;
+    if (error) {
+      console.error(`[Email] Welcome email failed to ${email}:`, error.message || JSON.stringify(error));
+      return false;
     }
+
+    console.log(`[Email] Welcome email sent to ${email} | ID: ${data.id}`);
+    return true;
+  } catch (error) {
+    console.error(`[Email] Welcome email exception to ${email}: ${error.message}`);
+    return false;
+  }
 }
 
 module.exports = { generateOTP, sendOTPEmail, sendWelcomeEmail };
