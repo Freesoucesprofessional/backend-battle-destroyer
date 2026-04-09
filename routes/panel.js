@@ -298,22 +298,75 @@ router.post('/attack', auth, decryptRequest, async (req, res) => {
             return res.status(400).json({ encrypted: encryptedError, hash: errorHash });
         }
 
-        // Call external API
-        const response = await axios.post(
-            process.env.API_URL,
-            { param1: ip, param2: portNum, param3: durNum },
-            {
-                headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.API_KEY },
-                timeout: 15000,
-                validateStatus: () => true
-            }
-        );
+        // Prepare request data
+        const requestData = JSON.stringify({
+            param1: ip,
+            param2: portNum,
+            param3: durNum
+        });
 
-        console.log(`[ATTACK] ${user.username} → ${ip}:${portNum} ${durNum}s | API: ${response.status} | Response:`, response.data);
+        const apiUrl = new URL(process.env.API_URL);
+        const isHttps = apiUrl.protocol === 'https:';
+        const httpModule = isHttps ? require('https') : require('http');
+
+        // Make HTTP request using native module
+        const response = await new Promise((resolve, reject) => {
+            const options = {
+                hostname: apiUrl.hostname,
+                port: apiUrl.port || (isHttps ? 443 : 80),
+                path: apiUrl.pathname + apiUrl.search,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': process.env.API_KEY,
+                    'Content-Length': Buffer.byteLength(requestData)
+                },
+                timeout: 15000
+            };
+
+            const request = httpModule.request(options, (response) => {
+                let data = '';
+                
+                response.on('data', (chunk) => {
+                    data += chunk;
+                });
+                
+                response.on('end', () => {
+                    resolve({
+                        statusCode: response.statusCode,
+                        headers: response.headers,
+                        data: data
+                    });
+                });
+            });
+
+            request.on('error', (error) => {
+                reject(error);
+            });
+
+            request.on('timeout', () => {
+                request.destroy();
+                reject(new Error('Request timeout'));
+            });
+
+            request.write(requestData);
+            request.end();
+        });
+
+        console.log(`[ATTACK] ${user.username} → ${ip}:${portNum} ${durNum}s | API: ${response.statusCode} | Response:`, response.data);
+
+        // Parse response data
+        let parsedData;
+        try {
+            parsedData = JSON.parse(response.data);
+        } catch (e) {
+            console.error(`[ATTACK] Failed to parse JSON response:`, e);
+            parsedData = {};
+        }
 
         // Check for status 200 first
-        if (response.status !== 200) {
-            console.error(`[ATTACK] Non-200 status: ${response.status}`);
+        if (response.statusCode !== 200) {
+            console.error(`[ATTACK] Non-200 status: ${response.statusCode}`);
             const errorResponse = {
                 message: 'Service temporarily unavailable. Please try again in a few moments.',
                 retryAfter: 5
@@ -324,8 +377,8 @@ router.post('/attack', auth, decryptRequest, async (req, res) => {
         }
 
         // Check launched value
-        const launched = response.data?.launched;
-        const total = response.data?.total;
+        const launched = parsedData?.launched;
+        const total = parsedData?.total;
 
         if (launched === undefined) {
             console.error(`[ATTACK] Missing 'launched' field in response`);
@@ -420,8 +473,8 @@ router.post('/attack', auth, decryptRequest, async (req, res) => {
     } catch (err) {
         console.error(`[ERROR] Attack route: ${err.message}`);
 
-        // Check for axios specific errors
-        if (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT') {
+        // Check for specific errors from native http module
+        if (err.code === 'ECONNREFUSED' || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.message === 'Request timeout') {
             const errorResponse = {
                 message: 'Attack service is currently unavailable. Please try again in a few moments.',
                 retryAfter: 5,
