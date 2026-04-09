@@ -3,7 +3,6 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const { ipKeyGenerator } = require('express-rate-limit');
 const csrf = require('csurf');
 const cookieParser = require('cookie-parser');
 const axios = require('axios');
@@ -167,7 +166,7 @@ const attackLimiter = rateLimit({
   message: { message: 'Too many attack requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: ipKeyGenerator,
+  keyGenerator: (req) => getRealIP(req),
   skip: (req) => !req.path.includes('attack')
 });
 
@@ -180,7 +179,7 @@ const adminLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: true,
   keyGenerator: (req) => {
-    return `${ipKeyGenerator(req)}:${req.headers['x-admin-token'] || 'anonymous'}`;
+    return `${getRealIP(req)}:${req.headers['x-admin-token'] || 'anonymous'}`;
   },
 });
 
@@ -205,7 +204,7 @@ const apiRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return req.headers['x-api-key'] || req.headers['authorization'] || ipKeyGenerator(req);
+    return req.headers['x-api-key'] || req.headers['authorization'] || getRealIP(req);
   },
   skip: (req) => !req.path.startsWith('/api/v1')
 });
@@ -216,12 +215,14 @@ const otpSendLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 3, // 3 requests per 15 minutes
   message: { message: 'Too many OTP requests. Please wait before trying again.' },
+  keyGenerator: (req) => getRealIP(req),
 });
 
 const otpVerifyLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   message: { message: 'Too many verification attempts. Please try again later.' },
+  keyGenerator: (req) => getRealIP(req),
 });
 
 // Apply to OTP routes
@@ -314,7 +315,7 @@ app.use((err, req, res, next) => {
     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
     path: req.path,
     method: req.method,
-    ip: req.ip,
+    ip: getRealIP(req),
     timestamp: new Date().toISOString(),
     bgmiError: err.bgmiError || undefined
   });
