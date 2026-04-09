@@ -362,7 +362,7 @@ mongoose.connect(process.env.MONGO_URI, {
       console.log(`   └─ Next Run: ${status.nextRun}`);
     }, 100);
 
-    const PORT = process.env.PORT || 5000;
+    const PORT = process.env.PORT;
     const server = app.listen(PORT, '127.0.0.1', () => {
       console.log(`\n🚀 Server running on port ${PORT}`);
       console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
