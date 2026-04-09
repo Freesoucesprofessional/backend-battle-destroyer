@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 const csrf = require('csurf');
 const cookieParser = require('cookie-parser');
 const axios = require('axios');
@@ -11,13 +12,16 @@ require('dotenv').config();
 const apiAdminRoutes = require('./routes/apiAdmin');
 const apiExternalRoutes = require('./routes/apiExternal');
 const apiAuthRoutes = require('./routes/apiAuth');
+// Import services
 const bgmiService = require('./services/bgmiService');
 const dailyResetService = require('./services/dailyResetService');
 const ApiUser = require('./models/ApiUser');
 const app = express();
 const otpRoutes = require('./routes/otp');
+// Optional: If you want a captcha endpoint, uncomment this
+// const captchaRoutes = require('./routes/captchaRoutes');
 
-// ===== TRUST PROXY =====
+// ===== TRUST PROXY (for production behind load balancer) =====
 app.set('trust proxy', 2);
 
 // ===== ENFORCE HTTPS IN PRODUCTION =====
@@ -28,9 +32,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// ===== REAL IP HELPER (defined before any middleware that uses it) =====
 function getRealIP(req) {
-  return req.headers['cf-connecting-ip']
+  return req.headers['cf-connecting-ip']    // Real IP from Cloudflare
     || req.headers['x-forwarded-for']?.split(',')[0].trim()
     || req.ip;
 }
@@ -93,7 +96,7 @@ app.use(express.urlencoded({ limit: '10kb', extended: true }));
 // ===== COOKIE PARSER (for CSRF) =====
 app.use(cookieParser(process.env.COOKIE_SECRET || 'your-cookie-secret'));
 
-// ===== CSRF PROTECTION =====
+// ===== CSRF PROTECTION (Exclude API routes) =====
 const csrfProtection = csrf({
   cookie: {
     httpOnly: true,
@@ -105,15 +108,10 @@ const csrfProtection = csrf({
 // ===== REQUEST LOGGING MIDDLEWARE =====
 app.use((req, res, next) => {
   const start = Date.now();
-  const realIP = getRealIP(req); // capture real IP here
-
   res.on('finish', () => {
     const duration = Date.now() - start;
     if (process.env.DEBUG_LOGS === 'true') {
-      console.log(
-        `[${new Date().toISOString()}] ${req.method} ${req.path} | ` +
-        `IP: ${realIP} | Status: ${res.statusCode} | ${duration}ms`
-      );
+      console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - ${res.statusCode} - ${duration}ms`);
       if (req.path.includes('attack') || req.path.includes('bgmi')) {
         console.log(`[BGMI] ${req.method} ${req.path} - ${res.statusCode}`);
       }
@@ -128,24 +126,27 @@ app.use((req, res, next) => {
   next();
 });
 
-// ===== RATE LIMITERS =====
+// ===== RATE LIMITERS CONFIGURATION =====
 
+// Reseller search rate limiter (stricter for search operations)
 const resellerSearchLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
   message: { message: 'Too many search requests, please wait before trying again.' },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => `${getRealIP(req)}:${req.resellerId || 'anonymous'}`,
+  keyGenerator: (req) => {
+    return `${getRealIP(req)}:${req.resellerId || 'anonymous'}`;
+  },
 });
 
+// Global rate limiter (for most API endpoints)
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   message: { message: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => getRealIP(req),
   skip: (req) => {
     if (process.env.NODE_ENV !== 'production') return true;
     if (req.path === '/' || req.path === '/api/bgmi/health' || req.path === '/api/csrf-token') return true;
@@ -159,16 +160,18 @@ const globalLimiter = rateLimit({
   },
 });
 
+// Attack rate limiter (STRICT - most sensitive endpoint)
 const attackLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 5,
   message: { message: 'Too many attack requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => getRealIP(req),
+  keyGenerator: ipKeyGenerator,
   skip: (req) => !req.path.includes('attack')
 });
 
+// Admin rate limiter
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
@@ -176,9 +179,12 @@ const adminLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
-  keyGenerator: (req) => `${getRealIP(req)}:${req.headers['x-admin-token'] || 'anonymous'}`,
+  keyGenerator: (req) => {
+    return `${ipKeyGenerator(req)}:${req.headers['x-admin-token'] || 'anonymous'}`;
+  },
 });
 
+// Reseller rate limiter
 const resellerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 60,
@@ -186,34 +192,39 @@ const resellerLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
-  keyGenerator: (req) => `${getRealIP(req)}:${req.resellerId || 'anonymous'}`,
+  keyGenerator: (req) => {
+    return `${getRealIP(req)}:${req.resellerId || 'anonymous'}`;
+  },
 });
 
+// API rate limiter
 const apiRateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 100,
   message: { error: 'Rate limit exceeded', message: 'Please slow down your requests' },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.headers['x-api-key'] || req.headers['authorization'] || getRealIP(req),
+  keyGenerator: (req) => {
+    return req.headers['x-api-key'] || req.headers['authorization'] || ipKeyGenerator(req);
+  },
   skip: (req) => !req.path.startsWith('/api/v1')
 });
 
+
+// OTP rate limiters
 const otpSendLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 3,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 3, // 3 requests per 15 minutes
   message: { message: 'Too many OTP requests. Please wait before trying again.' },
-  keyGenerator: (req) => getRealIP(req),
 });
 
 const otpVerifyLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   message: { message: 'Too many verification attempts. Please try again later.' },
-  keyGenerator: (req) => getRealIP(req),
 });
 
-// ===== APPLY RATE LIMITERS =====
+// Apply to OTP routes
 app.use('/api/', globalLimiter);
 app.use('/api/panel/attack', attackLimiter);
 app.use('/api/admin', adminLimiter);
@@ -223,12 +234,20 @@ app.use('/api/api-auth', apiAuthRoutes);
 app.use('/api/otp', otpRoutes);
 app.use('/api/otp/send-otp', otpSendLimiter);
 app.use('/api/otp/verify-otp', otpVerifyLimiter);
+// If you want to use the captcha route, uncomment this line:
+// app.use('/api/captcha', captchaRoutes);
 
-// ===== PUBLIC ROUTES =====
+// ===== ROUTES MOUNTING =====
+
+// Public routes
 app.get('/', (req, res) => {
-  res.json({ message: 'Server is running', status: 'active' });
+  res.json({
+    message: 'Server is running',
+    status: 'active'
+  });
 });
 
+// BGMI health check endpoint
 app.get('/api/bgmi/health', async (req, res) => {
   try {
     const health = await bgmiService.checkHealth();
@@ -242,6 +261,7 @@ app.get('/api/bgmi/health', async (req, res) => {
   }
 });
 
+// CSRF token endpoint
 app.get('/api/csrf-token', csrfProtection, (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
 });
@@ -252,11 +272,12 @@ app.use('/api/auth', require('./routes/auth'));
 // ===== PANEL ROUTES =====
 app.use('/api/panel', require('./routes/panel'));
 
+// ===== EXTERNAL API =====
 // ===== ADMIN AND RESELLER ROUTES =====
 app.use('/api/admin', csrfProtection, require('./routes/admin'));
 app.use('/api/reseller', csrfProtection, require('./routes/reseller'));
 
-// ===== ADDITIONAL SECURITY HEADERS =====
+// ===== SECURITY HEADERS =====
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -293,7 +314,7 @@ app.use((err, req, res, next) => {
     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
     path: req.path,
     method: req.method,
-    ip: getRealIP(req),
+    ip: req.ip,
     timestamp: new Date().toISOString(),
     bgmiError: err.bgmiError || undefined
   });
@@ -310,14 +331,14 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ===== CLEANUP JOB =====
+// ===== CLEANUP JOBS (FIXED - removed duplicate) =====
 setInterval(async () => {
   try {
     await ApiUser.cleanExpiredAttacks();
   } catch (error) {
     console.error('Cleanup job error:', error);
   }
-}, 60000);
+}, 60000); // Only ONE interval, not two
 
 // ===== MONGODB CONNECTION & SERVER START =====
 mongoose.connect(process.env.MONGO_URI, {
