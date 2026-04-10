@@ -20,7 +20,7 @@ function decryptData(encryptedData) {
     return JSON.parse(decrypted);
   } catch (error) {
     console.error('Decryption error:', error);
-    throw new Error('Invalid encrypted data');
+    throw new Error('Invalid encrypted data.');
   }
 }
 
