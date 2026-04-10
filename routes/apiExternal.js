@@ -258,7 +258,7 @@ router.post('/attack', async (req, res) => {
                 const errorMessage = externalResponse.data?.message || externalResponse.data?.error || 'Error occurred during connection botnet amplification';
 
                 return res.status(500).json({
-                    error: 'Attack failed Try again until get success',
+                    error: 'Attack failed Try again until get success Unable to establish bgmi server connection',
                     message: errorMessage,
                     details: {
                         launched: launched,
