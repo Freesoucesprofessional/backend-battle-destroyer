@@ -71,6 +71,8 @@ app.use(helmet({
 const allowedOrigins = [
   'https://battle-destroyer.shop',
   'https://www.battle-destroyer.shop',
+  'https://battle-destroyer.com',
+  'https://www.battle-destroyer.com',
   'http://localhost:3000',
   'https://api.battle-destroyer.shop',
 ];
