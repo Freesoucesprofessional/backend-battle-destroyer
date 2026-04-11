@@ -73,6 +73,8 @@ const allowedOrigins = [
   'https://www.battle-destroyer.shop',
   'https://battle-destroyer.com',
   'https://www.battle-destroyer.com',
+  'https://battle-destroyer.asia',
+  'https://www.battle-destroyer.asia',
   'http://localhost:3000',
   'https://api.battle-destroyer.shop',
 ];
