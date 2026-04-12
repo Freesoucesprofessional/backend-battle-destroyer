@@ -383,39 +383,41 @@ router.get('/attacks/stats', adminAuth, async (req, res) => {
 
 router.post('/api-users/:id/extend', adminAuth, async (req, res) => {
   try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id))
       return res.status(400).json({ message: 'Invalid user ID format' });
-    }
 
     const { days } = req.body;
 
-    if (days === undefined || days === null) {
+    if (days === undefined || days === null)
       return res.status(400).json({ message: 'Days parameter is required' });
-    }
 
     const daysNum = parseInt(days);
-    if (isNaN(daysNum) || daysNum < 1 || daysNum > 365) {
+    if (isNaN(daysNum) || daysNum < 1 || daysNum > 365)
       return res.status(400).json({ message: `Days must be between 1 and 365. Received: ${days}` });
-    }
 
     const apiUser = await ApiUser.findById(req.params.id);
-    if (!apiUser) {
+    if (!apiUser)
       return res.status(404).json({ message: 'API user not found' });
-    }
 
     const oldExpiry = apiUser.expiresAt;
-    const newExpiry = await apiUser.extendExpiration(daysNum);
+
+    // Extend: from current expiry if still valid, else from now
+    const base = apiUser.expiresAt && apiUser.expiresAt > new Date()
+      ? apiUser.expiresAt
+      : new Date();
+    apiUser.expiresAt = new Date(base.getTime() + daysNum * 24 * 60 * 60 * 1000);
+
+    if (apiUser.status === 'expired') apiUser.status = 'active';
+
+    await apiUser.save();   // ← explicit save; don't rely solely on the model method
+
+    const newExpiry = apiUser.expiresAt;
 
     await createAuditLog({
-      actorType: 'admin',
-      actorId: req.userId,
-      action: 'EXTEND_API_USER',
-      targetId: apiUser._id,
-      targetType: 'api_user',
+      actorType: 'admin', actorId: req.userId,
+      action: 'EXTEND_API_USER', targetId: apiUser._id, targetType: 'api_user',
       changes: { days: daysNum, oldExpiry, newExpiry },
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
-      success: true
+      ip: req.ip, userAgent: req.headers['user-agent'], success: true
     });
 
     res.json({
