@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
-const mongoose = require('mongoose'); // ✅ ADD THIS — needed for ObjectId casting
+const mongoose = require('mongoose'); 
 const User = require('../models/User');
 const Reseller = require('../models/Reseller');
 const AuditLog = require('../models/AuditLog');
@@ -123,6 +123,24 @@ async function adminAuth(req, res, next) {
   }
 }
 
+// Add this middleware (uses your existing decryptData & createHash functions)
+function decryptBody(req, res, next) {
+    if (req.body?.encrypted && req.body?.hash) {
+        try {
+            const decrypted = decryptData(req.body.encrypted);
+            const expectedHash = createHash(decrypted);
+            if (expectedHash !== req.body.hash) {
+                return res.status(400).json({ message: 'Integrity check failed' });
+            }
+            req.body = decrypted;
+            next();
+        } catch (err) {
+            return res.status(400).json({ message: 'Decryption failed' });
+        }
+    } else {
+        next();
+    }
+}
 
 /**
  * GET /api/admin/attacks/running
@@ -381,7 +399,7 @@ router.get('/attacks/stats', adminAuth, async (req, res) => {
   }
 });
 
-router.post('/api-users/:id/extend', adminAuth, async (req, res) => {
+router.post('/api-users/:id/extend', adminAuth, decryptBody, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id))
       return res.status(400).json({ message: 'Invalid user ID format' });
@@ -433,7 +451,7 @@ router.post('/api-users/:id/extend', adminAuth, async (req, res) => {
 });
 
 // SET API user expiration (replace)
-router.post('/api-users/:id/set-expiration', adminAuth, async (req, res) => {
+router.post('/api-users/:id/set-expiration', adminAuth, decryptBody, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ message: 'Invalid user ID format' });
