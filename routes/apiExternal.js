@@ -6,7 +6,7 @@ const { v4: uuidv4 } = require('uuid');
 const { authenticateApiUser } = require('../middleware/apiAuthMiddleware');
 const ApiUser = require('../models/ApiUser');
 const attackTracker = require('../services/attackTracker');
-const serveron = true
+const serveron = false
 
 // Helper function to make HTTP/HTTPS request
 async function makeHttpRequest(url, data, headers, timeout = 15000) {
